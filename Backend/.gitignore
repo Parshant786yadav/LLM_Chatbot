@@ -1,0 +1,24 @@
+# Virtual environment
+chatbot/
+venv/
+
+# Environment variables
+.env
+.env.example
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Database
+chatbot.db
+
+# FAISS index (if added later)
+*.index
+
+# VS Code
+.vscode/
+
+# Logs
+*.log

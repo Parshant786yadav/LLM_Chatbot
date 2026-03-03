@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Enterprise AI Assistant</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div class="layout">
+
+    <!-- SIDEBAR -->
+    <div class="sidebar">
+
+        <!-- PROFILE SECTION -->
+        <div id="authSection" class="profile-section">
+            <button id="loginBtn" class="login-btn" onclick="openLoginPopup()">Sign in</button>
+
+            <div id="profileBox" class="profile-box" style="display: none;">
+                <button type="button" class="profile-trigger" id="profileTrigger" onclick="toggleProfileDropdown(event)" aria-haspopup="true" aria-expanded="false">
+                    <img id="profilePhoto" src="https://api.dicebear.com/7.x/avataaars/svg?seed=default" alt="Profile" class="profile-img">
+                    <div class="profile-info">
+                        <span id="profileName" class="profile-name" title="">Account</span>
+                        <span class="profile-chevron" aria-hidden="true">▼</span>
+                    </div>
+                </button>
+                <div id="profileDropdown" class="profile-dropdown" role="menu">
+                    <label class="profile-dropdown-item upload-label" role="menuitem">
+                        Change photo
+                        <input type="file" id="photoUpload" accept="image/*" onchange="changePhoto()" hidden>
+                    </label>
+                    <button type="button" class="profile-dropdown-item profile-logout" onclick="logout()" role="menuitem">Log out</button>
+                </div>
+            </div>
+        </div>
+
+        <hr>
+
+        <h3>AI Workspace</h3>
+        <button onclick="createChat()">+ New Chat</button>
+
+        <div class="section">
+            <h4>Chats</h4>
+            <ul id="chatList"></ul>
+        </div>
+
+        <!-- PERSONAL MODE ONLY - Global Documents stay in sidebar -->
+        <div id="documentSection">
+            <div class="section documents-block">
+                <h4>Global Documents</h4>
+                <input type="file" id="globalUpload" onchange="uploadDocument()">
+                <button type="button" class="documents-toggle" id="globalDocsToggle" onclick="toggleGlobalDocsList()">Documents uploaded 0</button>
+                <ul id="globalDocs" class="doc-list doc-list-collapsed"></ul>
+            </div>
+        </div>
+
+    </div>
+
+    <!-- MAIN AREA -->
+    <div class="main">
+        <div class="chat-header">
+            <h3 id="chatTitle">Select or Create Chat</h3>
+            <!-- Chat Documents: upper right, only in personal mode when a chat is selected -->
+            <div id="chatDocsPanel" class="chat-docs-panel" style="display: none;">
+                <h4 class="chat-docs-panel-title">Chat Documents</h4>
+                <input type="file" id="chatUpload" onchange="uploadChatDoc()" class="chat-docs-upload">
+                <button type="button" class="documents-toggle chat-docs-toggle" id="chatDocsToggle" onclick="toggleChatDocsList()">Documents uploaded 0</button>
+                <ul id="chatDocs" class="chat-docs-list doc-list doc-list-collapsed"></ul>
+            </div>
+        </div>
+
+        <div id="chatArea" class="chat-area"></div>
+
+        <div class="input-box">
+            <input id="messageInput" placeholder="Ask your AI...">
+            <button onclick="sendMessage()">Send</button>
+        </div>
+    </div>
+
+</div>
+
+<!-- LOGIN POPUP -->
+<div id="loginPopup" class="popup">
+    <div class="popup-box">
+        <h3>Select Login Type</h3>
+
+        <button onclick="showPersonalLogin()">Personal Login</button>
+        <button onclick="showCompanyLogin()">Company Login</button>
+
+        <div id="loginForm" style="margin-top:15px;"></div>
+
+        <button class="close-btn" onclick="closeLoginPopup()">Close</button>
+    </div>
+</div>
+
+<script src="script.js"></script>
+</body>
+</html>

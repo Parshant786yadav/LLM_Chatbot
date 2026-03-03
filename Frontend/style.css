@@ -1,0 +1,564 @@
+.login-section {
+    margin-bottom: 15px;
+}
+
+.login-section input {
+    width: 100%;
+    padding: 6px;
+    margin-bottom: 5px;
+}
+
+.login-section button {
+    width: 100%;
+    padding: 6px;
+    background: #2563eb;
+    border: none;
+    color: white;
+    cursor: pointer;
+    border-radius: 4px;
+}
+
+.user-info {
+    margin-top: 5px;
+    font-size: 12px;
+    color: #ccc;
+}
+body {
+    margin: 0;
+    font-family: Arial, sans-serif;
+    background: #f4f6f9;
+}
+
+.layout {
+    display: flex;
+    height: 100vh;
+}
+
+.sidebar {
+    width: 260px;
+    background: #1f2937;
+    color: white;
+    padding: 20px;
+    display: flex;
+    flex-direction: column;
+    overflow-y: auto;
+}
+
+.sidebar h2 {
+    margin-bottom: 15px;
+}
+
+.sidebar button {
+    padding: 8px;
+    margin-bottom: 10px;
+    border: none;
+    background: #2563eb;
+    color: white;
+    cursor: pointer;
+    border-radius: 5px;
+}
+
+.section {
+    margin-top: 15px;
+}
+
+.section h4 {
+    margin-bottom: 5px;
+    font-size: 14px;
+}
+
+.section ul {
+    list-style: none;
+    padding: 0;
+    font-size: 13px;
+}
+
+.section li {
+    background: #374151;
+    padding: 5px;
+    margin-bottom: 5px;
+    border-radius: 4px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.section li button {
+    font-size: 10px;
+    padding: 2px 5px;
+}
+
+/* Document list items: name + remove cross (below upload) */
+.doc-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px;
+}
+
+.doc-name {
+    flex: 1;
+    min-width: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.doc-remove-btn {
+    flex-shrink: 0;
+    width: 22px;
+    height: 22px;
+    padding: 0;
+    border: none;
+    border-radius: 4px;
+    background: rgba(220, 38, 38, 0.2);
+    color: #fca5a5;
+    font-size: 16px;
+    line-height: 1;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.15s, color 0.15s;
+}
+
+.doc-remove-btn:hover {
+    background: #dc2626;
+    color: #fff;
+}
+
+.sidebar .doc-remove-btn {
+    background: rgba(220, 38, 38, 0.25);
+    color: #fca5a5;
+}
+
+.sidebar .doc-remove-btn:hover {
+    background: #dc2626;
+    color: #fff;
+}
+
+/* Documents uploaded N - single toggle, expand to show list */
+.documents-block {
+    margin-top: 8px;
+}
+
+.documents-toggle {
+    display: block;
+    width: 100%;
+    margin-top: 8px;
+    padding: 8px 10px;
+    text-align: left;
+    font-size: 13px;
+    font-weight: 500;
+    color: inherit;
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    border-radius: 6px;
+    cursor: pointer;
+    transition: background 0.15s, border-color 0.15s;
+}
+
+.documents-toggle:hover {
+    background: rgba(255, 255, 255, 0.12);
+    border-color: rgba(255, 255, 255, 0.2);
+}
+
+.chat-docs-panel .documents-toggle {
+    background: #fff;
+    color: #334155;
+    border-color: #e2e8f0;
+}
+
+.chat-docs-panel .documents-toggle:hover {
+    background: #f1f5f9;
+    border-color: #cbd5e1;
+}
+
+.doc-list {
+    list-style: none;
+    padding: 0;
+    margin: 4px 0 0 0;
+    font-size: 13px;
+    max-height: 180px;
+    overflow-y: auto;
+    transition: max-height 0.2s ease-out;
+}
+
+.doc-list-collapsed {
+    max-height: 0;
+    overflow: hidden;
+    margin: 0;
+    padding: 0;
+}
+
+.doc-link {
+    cursor: pointer;
+    text-decoration: none;
+    color: #93c5fd;
+    flex: 1;
+    min-width: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.doc-link:hover {
+    text-decoration: underline;
+    color: #bfdbfe;
+}
+
+.chat-docs-list .doc-link {
+    color: #2563eb;
+}
+
+.chat-docs-list .doc-link:hover {
+    color: #1d4ed8;
+}
+
+.footer {
+    margin-top: auto;
+    font-size: 12px;
+    padding-top: 10px;
+    border-top: 1px solid #444;
+}
+
+.main {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+}
+
+.chat-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 15px;
+    background: white;
+    border-bottom: 1px solid #ddd;
+}
+
+.chat-header h3 {
+    margin: 0;
+    flex: 1;
+    min-width: 0;
+}
+
+/* Chat Documents panel - upper right, personal mode when chat selected */
+.chat-docs-panel {
+    flex-shrink: 0;
+    width: 200px;
+    padding: 12px;
+    background: #f8fafc;
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+}
+
+.chat-docs-panel-title {
+    margin: 0 0 8px 0;
+    font-size: 13px;
+    font-weight: 600;
+    color: #334155;
+}
+
+.chat-docs-upload {
+    width: 100%;
+    font-size: 12px;
+    margin-bottom: 8px;
+}
+
+.chat-docs-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    font-size: 12px;
+    max-height: 120px;
+    overflow-y: auto;
+    transition: max-height 0.2s ease-out;
+}
+
+.chat-docs-list.doc-list-collapsed {
+    max-height: 0;
+    overflow: hidden;
+    margin: 0;
+    padding: 0;
+}
+
+.chat-docs-list li {
+    padding: 4px 8px;
+    margin-bottom: 4px;
+    background: #fff;
+    border: 1px solid #e2e8f0;
+    border-radius: 4px;
+    color: #475569;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px;
+}
+
+.chat-docs-list .doc-remove-btn {
+    background: #fee2e2;
+    color: #dc2626;
+}
+
+.chat-docs-list .doc-remove-btn:hover {
+    background: #dc2626;
+    color: #fff;
+}
+
+.chat-area {
+    flex: 1;
+    padding: 20px;
+    overflow-y: auto;
+}
+
+.message-avatar {
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    object-fit: cover;
+    flex-shrink: 0;
+}
+
+.message {
+    max-width: 60%;
+    padding: 10px;
+    margin-bottom: 10px;
+    border-radius: 8px;
+}
+
+.user {
+    background: #dbeafe;
+    align-self: flex-end;
+}
+
+.bot {
+    background: white;
+    border: 1px solid #ccc;
+}
+
+.input-box {
+    display: flex;
+    padding: 15px;
+    background: white;
+    border-top: 1px solid #ddd;
+}
+
+.input-box input {
+    flex: 1;
+    padding: 10px;
+}
+
+.input-box button {
+    padding: 10px;
+    background: #2563eb;
+    color: white;
+    border: none;
+}
+.modal {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.5);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+}
+
+.modal-box {
+    background: white;
+    padding: 30px;
+    border-radius: 8px;
+    text-align: center;
+}
+
+.login-btn {
+    padding: 8px;
+    background: #2563eb;
+    border: none;
+    color: white;
+    cursor: pointer;
+    border-radius: 5px;
+    width: 100%;
+}
+
+.popup {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.5);
+    display: none;
+    justify-content: center;
+    align-items: center;
+}
+
+.popup-box {
+    background: white;
+    padding: 25px;
+    border-radius: 8px;
+    width: 300px;
+    text-align: center;
+}
+
+.popup-box button {
+    margin-top: 8px;
+    padding: 8px;
+    width: 100%;
+}
+
+.close-btn {
+    background: red;
+    color: white;
+}
+
+.user-info {
+    font-size: 12px;
+    margin-top: 5px;
+    color: #ccc;
+}
+/* ---------- PROFILE SECTION ---------- */
+.profile-section {
+    position: relative;
+    margin-bottom: 12px;
+    padding-bottom: 12px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.profile-section .login-btn {
+    width: 100%;
+    padding: 10px 14px;
+    font-size: 14px;
+    font-weight: 600;
+    border-radius: 8px;
+    transition: background 0.2s, transform 0.1s;
+}
+
+.profile-section .login-btn:hover {
+    background: #1d4ed8;
+}
+
+.profile-section .login-btn:active {
+    transform: scale(0.98);
+}
+
+.profile-box {
+    position: relative;
+    display: block;
+}
+
+.profile-trigger {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    width: 100%;
+    padding: 8px 10px;
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 10px;
+    cursor: pointer;
+    color: inherit;
+    font: inherit;
+    text-align: left;
+    transition: background 0.2s, border-color 0.2s;
+}
+
+.profile-trigger:hover {
+    background: rgba(255, 255, 255, 0.12);
+    border-color: rgba(255, 255, 255, 0.18);
+}
+
+.profile-img {
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    object-fit: cover;
+    flex-shrink: 0;
+    border: 2px solid rgba(255, 255, 255, 0.3);
+}
+
+.profile-info {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px;
+}
+
+.profile-name {
+    font-size: 13px;
+    font-weight: 500;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    color: #e5e7eb;
+}
+
+.profile-chevron {
+    font-size: 10px;
+    color: rgba(255, 255, 255, 0.6);
+    flex-shrink: 0;
+    transition: transform 0.2s;
+}
+
+.profile-box.open .profile-chevron {
+    transform: rotate(180deg);
+}
+
+.profile-dropdown {
+    display: none;
+    position: absolute;
+    top: calc(100% + 6px);
+    left: 0;
+    right: 0;
+    background: #fff;
+    color: #111827;
+    padding: 6px;
+    border-radius: 8px;
+    box-shadow: 0 10px 25px rgba(0, 0, 0, 0.25);
+    border: 1px solid #e5e7eb;
+    z-index: 100;
+    min-width: 180px;
+}
+
+.profile-box.open .profile-dropdown {
+    display: block;
+}
+
+.profile-dropdown-item {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    padding: 8px 12px;
+    border: none;
+    border-radius: 6px;
+    font-size: 13px;
+    cursor: pointer;
+    transition: background 0.15s;
+    margin-bottom: 4px;
+    background: transparent;
+    color: #374151;
+}
+
+.profile-dropdown-item:last-child {
+    margin-bottom: 0;
+}
+
+.profile-dropdown-item:hover {
+    background: #f3f4f6;
+}
+
+.upload-label {
+    cursor: pointer;
+    font-weight: 500;
+}
+
+.profile-logout {
+    color: #dc2626;
+    font-weight: 500;
+}
+
+.profile-logout:hover {
+    background: #fef2f2;
+    color: #b91c1c;
+}
