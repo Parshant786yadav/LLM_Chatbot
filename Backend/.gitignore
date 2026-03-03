@@ -14,6 +14,9 @@ __pycache__/
 # Database
 chatbot.db
 
+# Stored PDF files (preview)
+document_storage/
+
 # FAISS index (if added later)
 *.index
 

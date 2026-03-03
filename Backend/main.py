@@ -1,9 +1,14 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from typing import Optional
 import os
+import io
+import re
+import time
 from sqlalchemy import or_, text
+from sqlalchemy.exc import OperationalError
 from dotenv import load_dotenv
 from groq import Groq
 from database import engine, SessionLocal
@@ -15,15 +20,32 @@ from models import Document, DocumentChunk
 import json
 from rag import cosine_similarity
 
-Base.metadata.create_all(bind=engine)
 
-# Ensure documents.chat_id exists (for existing DBs created before chat-scoped docs)
-with engine.connect() as conn:
-    r = conn.execute(text("PRAGMA table_info(documents)"))
-    cols = [row[1] for row in r.fetchall()]
-    if "chat_id" not in cols:
-        conn.execute(text("ALTER TABLE documents ADD COLUMN chat_id INTEGER REFERENCES chats(id)"))
-        conn.commit()
+# Run DB setup at app startup (avoids "database is locked" when uvicorn --reload spawns subprocess)
+UPLOAD_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "document_storage")
+os.makedirs(UPLOAD_DIR, exist_ok=True)
+
+def _run_db_migrations():
+    engine.dispose()
+    last_error = None
+    for attempt in range(8):
+        try:
+            Base.metadata.create_all(bind=engine)
+            with engine.begin() as conn:
+                conn.execute(text("PRAGMA journal_mode=WAL"))
+                r = conn.execute(text("PRAGMA table_info(documents)"))
+                cols = [row[1] for row in r.fetchall()]
+                if "chat_id" not in cols:
+                    conn.execute(text("ALTER TABLE documents ADD COLUMN chat_id INTEGER REFERENCES chats(id)"))
+                if "file_path" not in cols:
+                    conn.execute(text("ALTER TABLE documents ADD COLUMN file_path VARCHAR"))
+            return
+        except OperationalError as e:
+            last_error = e
+            if "locked" not in str(e).lower() and "busy" not in str(e).lower():
+                raise
+            time.sleep(2.0 * (attempt + 1))
+    raise last_error
 
 load_dotenv()
 
@@ -32,6 +54,12 @@ GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 client = Groq(api_key=GROQ_API_KEY) if GROQ_API_KEY else None
 
 app = FastAPI(title="Enterprise AI Assistant Backend")
+
+
+@app.on_event("startup")
+def startup():
+    _run_db_migrations()
+
 
 app.add_middleware(
     CORSMiddleware,
@@ -59,6 +87,27 @@ def _is_quota_error(e: Exception) -> bool:
 def _call_groq_with_history(groq_client: Groq, model: str, history_user_contents: list[str], final_prompt: str) -> str:
     """Call Groq chat with conversation history. Returns reply text or raises."""
     messages = [{"role": "user", "content": c} for c in history_user_contents]
+    messages.append({"role": "user", "content": final_prompt})
+    response = groq_client.chat.completions.create(
+        model=model,
+        messages=messages,
+    )
+    if response.choices and len(response.choices) > 0 and response.choices[0].message:
+        return response.choices[0].message.content or "No reply"
+    return "No reply"
+
+
+def _call_groq_with_system(
+    groq_client: Groq,
+    model: str,
+    system_instruction: str,
+    history_user_contents: list[str],
+    final_prompt: str,
+) -> str:
+    """Call Groq with system role + history. Talks naturally; uses doc context when provided."""
+    messages = [{"role": "system", "content": system_instruction}]
+    for c in history_user_contents:
+        messages.append({"role": "user", "content": c})
     messages.append({"role": "user", "content": final_prompt})
     response = groq_client.chat.completions.create(
         model=model,
@@ -145,28 +194,36 @@ def chat(req: ChatRequest):
                 score = cosine_similarity(query_embedding, chunk_embedding)
                 scored_chunks.append((score, chunk.content))
             scored_chunks.sort(reverse=True)
-            top_chunks = [c[1] for c in scored_chunks[:3]]
-            context = "\n\n".join(top_chunks)
+            # Only use chunks that are somewhat relevant (e.g. score > 0.2)
+            top_chunks = [c[1] for c in scored_chunks[:5] if c[0] > 0.2]
+            context = "\n\n".join(top_chunks) if top_chunks else ""
 
-        final_prompt = f"""
-        Answer the question using ONLY the context below.
-        If answer not in context, say you don't know.
-
-        Context:
-        {context}
-
-        Question:
-        {req.message}
-        """
-
-        # 5️⃣ Call Groq: try primary model, fallback on quota error
+        # 5️⃣ Call Groq: natural chat when no context, use docs when context exists
         reply = None
         last_error = None
 
+        system_instruction = (
+            "You are a friendly, helpful AI assistant. Talk naturally like a human—warm, conversational, and engaging. "
+            "For greetings (e.g. hello, hi, how are you), small talk, or general questions, respond in a natural way. "
+            "When the user has provided 'Relevant context from documents' below, use that context to answer questions about the documents when relevant; "
+            "otherwise answer from your knowledge or chat normally. Never say you don't know for simple greetings or chitchat."
+        )
+
+        if context.strip():
+            final_prompt = f"""Relevant context from the user's uploaded documents:
+
+{context}
+
+---
+
+User: {req.message}"""
+        else:
+            final_prompt = req.message
+
         for model in (CHAT_MODEL_PRIMARY, CHAT_MODEL_FALLBACK):
             try:
-                reply = _call_groq_with_history(
-                    client, model, history_user_contents, final_prompt
+                reply = _call_groq_with_system(
+                    client, model, system_instruction, history_user_contents, final_prompt
                 )
                 break
             except Exception as e:
@@ -203,6 +260,11 @@ def chat(req: ChatRequest):
     finally:
         db.close()
 
+def _sanitize_filename(name: str) -> str:
+    """Keep filename safe for storage."""
+    return re.sub(r'[^\w\s\-\.]', '_', name).strip() or "document"
+
+
 @app.post("/upload")
 async def upload_document(
     file: UploadFile = File(...),
@@ -216,7 +278,8 @@ async def upload_document(
         if file.content_type != "application/pdf":
             return {"error": "Only PDF supported"}
 
-        reader = PdfReader(file.file)
+        content = await file.read()
+        reader = PdfReader(io.BytesIO(content))
 
         full_text = ""
         for page in reader.pages:
@@ -245,11 +308,22 @@ async def upload_document(
                 db.refresh(chat_row)
             chat_id = chat_row.id
 
-        # create document record (chat_id=None for global, set for chat docs)
+        # create document record first to get id
         document = Document(name=file.filename, user_id=user.id, chat_id=chat_id)
         db.add(document)
         db.commit()
         db.refresh(document)
+
+        # store PDF on disk for preview
+        user_dir = os.path.join(UPLOAD_DIR, str(user.id))
+        os.makedirs(user_dir, exist_ok=True)
+        safe_name = _sanitize_filename(file.filename)
+        stored_name = f"{document.id}_{safe_name}"
+        file_path = os.path.join(user_dir, stored_name)
+        with open(file_path, "wb") as f:
+            f.write(content)
+        document.file_path = file_path
+        db.commit()
 
         # split and embed
         chunks = split_text(full_text)
@@ -266,7 +340,7 @@ async def upload_document(
 
         db.commit()
 
-        return {"message": "Document uploaded and processed"}
+        return {"message": "Document uploaded and processed", "document_id": document.id}
 
     finally:
         db.close()
@@ -290,6 +364,33 @@ def get_chats(email: str):
     finally:
         db.close()
 
+@app.get("/documents/file/{document_id}")
+def get_document_file(document_id: int, email: str):
+
+    db = SessionLocal()
+
+    try:
+        user = db.query(User).filter(User.email == email).first()
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        doc = db.query(Document).filter(
+            Document.id == document_id,
+            Document.user_id == user.id,
+        ).first()
+        if not doc or not doc.file_path or not os.path.isfile(doc.file_path):
+            raise HTTPException(status_code=404, detail="Document not found")
+
+        return FileResponse(
+            doc.file_path,
+            media_type="application/pdf",
+            filename=doc.name,
+        )
+
+    finally:
+        db.close()
+
+
 @app.get("/documents/{email}")
 def get_documents(email: str):
 
@@ -308,7 +409,10 @@ def get_documents(email: str):
         )
 
         return {
-            "documents": [doc.name for doc in docs]
+            "documents": [
+                {"id": doc.id, "name": doc.name, "has_preview": bool(doc.file_path and os.path.isfile(doc.file_path))}
+                for doc in docs
+            ]
         }
 
     finally:
@@ -340,7 +444,10 @@ def get_chat_documents(email: str, chat_name: str):
         )
 
         return {
-            "documents": [doc.name for doc in docs]
+            "documents": [
+                {"id": doc.id, "name": doc.name, "has_preview": bool(doc.file_path and os.path.isfile(doc.file_path))}
+                for doc in docs
+            ]
         }
 
     finally:

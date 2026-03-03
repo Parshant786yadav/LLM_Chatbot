@@ -4,6 +4,7 @@ let chats = [];
 let currentChat = null;
 let globalDocuments = [];
 let chatDocuments = {};
+var API_BASE = "http://localhost:8000";
 
 /* ---------------- PROFILE DROPDOWN ---------------- */
 
@@ -76,20 +77,20 @@ async function loadUserData(email) {
 
         // Load global documents (only for personal mode) - backend returns only global (chat_id null)
         if (loginMode === "personal") {
-            const docRes = await fetch(`http://localhost:8000/documents/${email}`);
+            const docRes = await fetch(`${API_BASE}/documents/${email}`);
             const docData = await docRes.json();
-            const names = docData.documents || [];
-            globalDocuments = names.map(function (name) { return { name: name, file: null }; });
+            const docList = docData.documents || [];
+            globalDocuments = docList.map(function (d) { return { id: d.id, name: d.name, file: null, has_preview: d.has_preview }; });
             renderGlobalDocs();
 
             // Load chat documents for each chat so count/list show after re-login
             for (let i = 0; i < chats.length; i++) {
                 const chatName = chats[i];
                 try {
-                    const chatDocRes = await fetch(`http://localhost:8000/documents/${email}/${encodeURIComponent(chatName)}`);
+                    const chatDocRes = await fetch(`${API_BASE}/documents/${email}/${encodeURIComponent(chatName)}`);
                     const chatDocData = await chatDocRes.json();
-                    const chatNames = chatDocData.documents || [];
-                    chatDocuments[chatName] = chatNames.map(function (name) { return { name: name, file: null }; });
+                    const chatDocList = chatDocData.documents || [];
+                    chatDocuments[chatName] = chatDocList.map(function (d) { return { id: d.id, name: d.name, file: null, has_preview: d.has_preview }; });
                 } catch (err) {
                     console.error("Error loading docs for chat " + chatName, err);
                     chatDocuments[chatName] = chatDocuments[chatName] || [];
@@ -223,10 +224,10 @@ async function selectChat(chatName) {
         // If we don't have this chat's docs yet (e.g. new chat), fetch from API
         if (!chatDocuments[chatName]) {
             try {
-                const chatDocRes = await fetch(`http://localhost:8000/documents/${userEmail}/${encodeURIComponent(chatName)}`);
+                const chatDocRes = await fetch(`${API_BASE}/documents/${userEmail}/${encodeURIComponent(chatName)}`);
                 const chatDocData = await chatDocRes.json();
-                const chatNames = chatDocData.documents || [];
-                chatDocuments[chatName] = chatNames.map(function (name) { return { name: name, file: null }; });
+                const chatDocList = chatDocData.documents || [];
+                chatDocuments[chatName] = chatDocList.map(function (d) { return { id: d.id, name: d.name, file: null, has_preview: d.has_preview }; });
             } catch (err) {
                 console.error("Error loading docs for chat", err);
                 chatDocuments[chatName] = [];
@@ -294,7 +295,7 @@ async function uploadChatDoc() {
             return;
         }
         chatDocuments[currentChat] = chatDocuments[currentChat] || [];
-        chatDocuments[currentChat].push({ name: file.name, file: file });
+        chatDocuments[currentChat].push({ id: data.document_id, name: file.name, file: file, has_preview: true });
         renderChatDocs();
         fileInput.value = "";
         if (data.message) alert(data.message);
@@ -304,14 +305,20 @@ async function uploadChatDoc() {
     }
 }
 
-function openDocPreview(file) {
-    if (!file) {
-        alert("Preview is not available for documents uploaded in a previous session.");
+function openDocPreview(doc) {
+    if (!doc) return;
+    if ((doc.id && doc.has_preview !== false) && userEmail) {
+        var url = API_BASE + "/documents/file/" + doc.id + "?email=" + encodeURIComponent(userEmail);
+        window.open(url, "_blank", "noopener");
         return;
     }
-    var url = URL.createObjectURL(file);
-    window.open(url, "_blank", "noopener");
-    setTimeout(function () { URL.revokeObjectURL(url); }, 60000);
+    if (doc.file) {
+        var blobUrl = URL.createObjectURL(doc.file);
+        window.open(blobUrl, "_blank", "noopener");
+        setTimeout(function () { URL.revokeObjectURL(blobUrl); }, 60000);
+        return;
+    }
+    alert("Preview is not available for this document.");
 }
 
 function toggleGlobalDocsList() {
@@ -338,11 +345,11 @@ function renderGlobalDocs() {
         var link = document.createElement("a");
         link.className = "doc-link";
         link.textContent = doc.name;
-        link.title = doc.file ? "Open preview" : "Preview not available for previous session";
+        link.title = (doc.has_preview || doc.file || (doc.id && doc.has_preview !== false)) ? "Open preview" : "Preview not available";
         link.href = "#";
         link.onclick = function (e) {
             e.preventDefault();
-            openDocPreview(doc.file);
+            openDocPreview(doc);
         };
         var removeBtn = document.createElement("button");
         removeBtn.type = "button";
@@ -382,11 +389,11 @@ function renderChatDocs() {
         var link = document.createElement("a");
         link.className = "doc-link";
         link.textContent = doc.name;
-        link.title = doc.file ? "Open preview" : "Preview not available for previous session";
+        link.title = (doc.has_preview || doc.file || (doc.id && doc.has_preview !== false)) ? "Open preview" : "Preview not available";
         link.href = "#";
         link.onclick = function (e) {
             e.preventDefault();
-            openDocPreview(doc.file);
+            openDocPreview(doc);
         };
         var removeBtn = document.createElement("button");
         removeBtn.type = "button";
@@ -411,6 +418,18 @@ function removeChatDoc(docName) {
 }
 
 /* ---------------- SEND MESSAGE ---------------- */
+
+(function setupEnterToSend() {
+    var input = document.getElementById("messageInput");
+    if (input) {
+        input.addEventListener("keydown", function (e) {
+            if (e.key === "Enter") {
+                e.preventDefault();
+                sendMessage();
+            }
+        });
+    }
+})();
 
 function sendMessage() {
 
@@ -530,7 +549,7 @@ async function uploadDocument() {
         const data = await response.json();
 
         if (!data.error && data.message) {
-            globalDocuments.push({ name: file.name, file: file });
+            globalDocuments.push({ id: data.document_id, name: file.name, file: file, has_preview: true });
             renderGlobalDocs();
         }
         alert(data.message || data.error);

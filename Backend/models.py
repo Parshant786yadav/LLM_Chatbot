@@ -42,6 +42,7 @@ class Document(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String)
+    file_path = Column(String, nullable=True)  # path to stored PDF for preview
     user_id = Column(Integer, ForeignKey("users.id"))
     chat_id = Column(Integer, ForeignKey("chats.id"), nullable=True)  # null = global doc
 
