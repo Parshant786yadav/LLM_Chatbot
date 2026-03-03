@@ -7,11 +7,11 @@ import os
 import io
 import re
 import time
-from sqlalchemy import or_, text
+from sqlalchemy import or_, text, create_engine
 from sqlalchemy.exc import OperationalError
 from dotenv import load_dotenv
 from groq import Groq
-from database import engine, SessionLocal
+from database import engine, SessionLocal, DATABASE_URL
 from models import Base, User, Chat, Message
 from fastapi import UploadFile, File, Form
 from pypdf import PdfReader
@@ -26,12 +26,16 @@ UPLOAD_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "document_
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 def _run_db_migrations():
-    engine.dispose()
+    # Use a short-timeout engine so we fail in seconds, not minutes
+    migration_engine = create_engine(
+        DATABASE_URL,
+        connect_args={"check_same_thread": False, "timeout": 3},
+    )
     last_error = None
-    for attempt in range(8):
+    for attempt in range(3):
         try:
-            Base.metadata.create_all(bind=engine)
-            with engine.begin() as conn:
+            Base.metadata.create_all(bind=migration_engine)
+            with migration_engine.begin() as conn:
                 conn.execute(text("PRAGMA journal_mode=WAL"))
                 r = conn.execute(text("PRAGMA table_info(documents)"))
                 cols = [row[1] for row in r.fetchall()]
@@ -39,13 +43,18 @@ def _run_db_migrations():
                     conn.execute(text("ALTER TABLE documents ADD COLUMN chat_id INTEGER REFERENCES chats(id)"))
                 if "file_path" not in cols:
                     conn.execute(text("ALTER TABLE documents ADD COLUMN file_path VARCHAR"))
+            migration_engine.dispose()
             return
         except OperationalError as e:
             last_error = e
             if "locked" not in str(e).lower() and "busy" not in str(e).lower():
+                migration_engine.dispose()
                 raise
-            time.sleep(2.0 * (attempt + 1))
-    raise last_error
+            time.sleep(1)
+    migration_engine.dispose()
+    raise RuntimeError(
+        "Database is locked. Close any other app using chatbot.db (other terminals, DB browser), then restart."
+    ) from last_error
 
 load_dotenv()
 
