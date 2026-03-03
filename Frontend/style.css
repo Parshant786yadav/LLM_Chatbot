@@ -562,3 +562,19 @@ body {
     background: #fef2f2;
     color: #b91c1c;
 }
+
+.profile-display-id-line {
+    padding: 8px 12px;
+    margin-bottom: 4px;
+    border-bottom: 1px solid #e5e7eb;
+    font-size: 12px;
+    color: #374151;
+}
+.profile-display-id-label {
+    margin-right: 6px;
+    color: #6b7280;
+}
+.profile-display-id-value {
+    font-weight: 600;
+    font-family: monospace;
+}

@@ -68,8 +68,18 @@ function showCompanyLogin() {
 
 async function loadUserData(email) {
     try {
+        // Fetch user display_id (A1, C2, etc.) for profile
+        try {
+            var infoRes = await fetch(API_BASE + "/user-info?email=" + encodeURIComponent(email));
+            var info = await infoRes.json();
+            var dispEl = document.getElementById("profileDisplayId");
+            if (dispEl) dispEl.textContent = info.display_id || "--";
+        } catch (e) {
+            console.error("Failed to load user info", e);
+        }
+
         // Load chats
-        const chatRes = await fetch(`http://localhost:8000/chats/${email}`);
+        const chatRes = await fetch(API_BASE + "/chats/" + encodeURIComponent(email));
         const chatData = await chatRes.json();
 
         chats = chatData.chats || [];
@@ -130,7 +140,7 @@ function loginPersonal() {
 
     closeLoginPopup();
 
-    // 🔥 Load existing chats & documents
+    // Load existing chats & documents (and user id)
     loadUserData(email);
 }
 
@@ -164,7 +174,7 @@ function loginCompany() {
 
     closeLoginPopup();
 
-    //  Load existing chats (company mode)
+    // Load existing chats (company mode) and user id
     loadUserData(email);
 }
 
@@ -187,6 +197,8 @@ function logout() {
     var panel = document.getElementById("chatDocsPanel");
     if (panel) panel.style.display = "none";
     document.getElementById("documentSection").style.display = "none";
+    var dispEl = document.getElementById("profileDisplayId");
+    if (dispEl) dispEl.textContent = "--";
     renderGlobalDocs();
 }
 

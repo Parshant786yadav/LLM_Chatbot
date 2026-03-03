@@ -10,6 +10,7 @@ class User(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     email = Column(String, unique=True, index=True)
+    display_id = Column(String, unique=True, nullable=True, index=True)  # A1, A2... (personal) or C1, C2... (company)
 
     chats = relationship("Chat", back_populates="user")
     documents = relationship("Document", back_populates="user")

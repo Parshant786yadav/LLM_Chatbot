@@ -25,6 +25,10 @@
                     </div>
                 </button>
                 <div id="profileDropdown" class="profile-dropdown" role="menu">
+                    <div class="profile-display-id-line">
+                        <span class="profile-display-id-label">User ID:</span>
+                        <span id="profileDisplayId" class="profile-display-id-value">--</span>
+                    </div>
                     <label class="profile-dropdown-item upload-label" role="menuitem">
                         Change photo
                         <input type="file" id="photoUpload" accept="image/*" onchange="changePhoto()" hidden>

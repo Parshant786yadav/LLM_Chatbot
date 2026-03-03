@@ -20,6 +20,9 @@ from models import Document, DocumentChunk
 import json
 from rag import cosine_similarity
 
+# Create all tables (users, chats, messages, documents, document_chunks) as soon as app loads
+# so "no such table: users" never happens when handling /chat requests
+Base.metadata.create_all(bind=engine)
 
 # Run DB setup at app startup (avoids "database is locked" when uvicorn --reload spawns subprocess)
 UPLOAD_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "document_storage")
@@ -34,15 +37,26 @@ def _run_db_migrations():
     last_error = None
     for attempt in range(3):
         try:
+            # Create all tables (users, chats, messages, documents, document_chunks) so User ID 1, 2, 3... work
             Base.metadata.create_all(bind=migration_engine)
             with migration_engine.begin() as conn:
                 conn.execute(text("PRAGMA journal_mode=WAL"))
-                r = conn.execute(text("PRAGMA table_info(documents)"))
-                cols = [row[1] for row in r.fetchall()]
-                if "chat_id" not in cols:
-                    conn.execute(text("ALTER TABLE documents ADD COLUMN chat_id INTEGER REFERENCES chats(id)"))
-                if "file_path" not in cols:
-                    conn.execute(text("ALTER TABLE documents ADD COLUMN file_path VARCHAR"))
+                try:
+                    r = conn.execute(text("PRAGMA table_info(documents)"))
+                    cols = [row[1] for row in r.fetchall()]
+                    if "chat_id" not in cols:
+                        conn.execute(text("ALTER TABLE documents ADD COLUMN chat_id INTEGER REFERENCES chats(id)"))
+                    if "file_path" not in cols:
+                        conn.execute(text("ALTER TABLE documents ADD COLUMN file_path VARCHAR"))
+                except Exception:
+                    pass
+                try:
+                    r = conn.execute(text("PRAGMA table_info(users)"))
+                    cols = [row[1] for row in r.fetchall()]
+                    if "display_id" not in cols:
+                        conn.execute(text("ALTER TABLE users ADD COLUMN display_id VARCHAR"))
+                except Exception:
+                    pass
             migration_engine.dispose()
             return
         except OperationalError as e:
@@ -68,6 +82,8 @@ app = FastAPI(title="Enterprise AI Assistant Backend")
 @app.on_event("startup")
 def startup():
     _run_db_migrations()
+    # Ensure main engine (used by requests) has tables; same file as migration
+    Base.metadata.create_all(bind=engine)
 
 
 app.add_middleware(
@@ -87,6 +103,21 @@ class ChatRequest(BaseModel):
     email: Optional[str] = None
     chat: Optional[str] = None
     message: str
+
+
+def _get_next_display_id(db, mode: str) -> str:
+    """Next user ID: personal -> A1, A2,... ; company -> C1, C2,..."""
+    prefix = "A" if (mode or "").strip().lower() == "personal" else "C"
+    result = db.execute(
+        text(
+            "SELECT MAX(CAST(SUBSTR(display_id, 2) AS INTEGER)) FROM users WHERE display_id LIKE :pat"
+        ),
+        {"pat": prefix + "%"},
+    )
+    row = result.scalar()
+    next_num = (row or 0) + 1
+    return prefix + str(next_num)
+
 
 def _is_quota_error(e: Exception) -> bool:
     err = str(e).upper()
@@ -145,7 +176,8 @@ def chat(req: ChatRequest):
 
         user = db.query(User).filter(User.email == email).first()
         if not user:
-            user = User(email=email)
+            display_id = _get_next_display_id(db, req.mode)
+            user = User(email=email, display_id=display_id)
             db.add(user)
             db.commit()
             db.refresh(user)
@@ -294,10 +326,11 @@ async def upload_document(
         for page in reader.pages:
             full_text += page.extract_text() or ""
 
-        # get user
+        # get user (upload is personal-only, so new users get A1, A2, ...)
         user = db.query(User).filter(User.email == email).first()
         if not user:
-            user = User(email=email)
+            display_id = _get_next_display_id(db, "personal")
+            user = User(email=email, display_id=display_id)
             db.add(user)
             db.commit()
             db.refresh(user)
@@ -372,6 +405,22 @@ def get_chats(email: str):
 
     finally:
         db.close()
+
+
+@app.get("/user-info")
+def get_user_info(email: str = ""):
+    """Get user's display_id (A1, C2, etc.) and email for profile."""
+    if not email:
+        return {"email": "", "display_id": None}
+    db = SessionLocal()
+    try:
+        user = db.query(User).filter(User.email == email).first()
+        if not user:
+            return {"email": email, "display_id": None}
+        return {"email": user.email, "display_id": user.display_id}
+    finally:
+        db.close()
+
 
 @app.get("/documents/file/{document_id}")
 def get_document_file(document_id: int, email: str):
