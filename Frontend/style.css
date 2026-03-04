@@ -88,6 +88,100 @@ body {
     padding: 2px 5px;
 }
 
+/* Chat list item: name + 3-dot menu (visible on hover) */
+.chat-list-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px;
+    cursor: pointer;
+}
+
+.chat-name-wrap {
+    flex: 1;
+    min-width: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.chat-name-text {
+    cursor: pointer;
+}
+
+.chat-item-actions {
+    flex-shrink: 0;
+    position: relative;
+}
+
+.chat-menu-btn {
+    opacity: 0;
+    padding: 2px 6px;
+    border: none;
+    border-radius: 4px;
+    background: transparent;
+    color: rgba(255, 255, 255, 0.8);
+    font-size: 16px;
+    line-height: 1;
+    cursor: pointer;
+    transition: opacity 0.15s ease;
+}
+
+.chat-list-item:hover .chat-menu-btn {
+    opacity: 1;
+}
+
+.chat-menu-btn:hover {
+    background: rgba(255, 255, 255, 0.1);
+    color: white;
+}
+
+.chat-menu-dropdown {
+    display: none;
+    position: absolute;
+    top: 100%;
+    right: 0;
+    margin-top: 2px;
+    min-width: 100px;
+    padding: 4px 0;
+    background: #1f2937;
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    border-radius: 6px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+    z-index: 50;
+}
+
+.chat-menu-dropdown.open {
+    display: block;
+}
+
+.chat-menu-rename {
+    display: block;
+    width: 100%;
+    padding: 6px 12px;
+    border: none;
+    background: transparent;
+    color: white;
+    font-size: 13px;
+    text-align: left;
+    cursor: pointer;
+}
+
+.chat-menu-rename:hover {
+    background: rgba(255, 255, 255, 0.1);
+}
+
+.chat-name-edit {
+    width: 100%;
+    padding: 2px 4px;
+    font-size: inherit;
+    color: #1f2937;
+    background: #fff;
+    border: 1px solid #2563eb;
+    border-radius: 4px;
+    outline: none;
+}
+
 /* Document list items: name + remove cross (below upload) */
 .doc-item {
     display: flex;
@@ -551,6 +645,17 @@ body {
 .upload-label {
     cursor: pointer;
     font-weight: 500;
+    box-sizing: border-box;
+}
+
+.upload-label input[type="file"] {
+    position: absolute;
+    width: 0;
+    height: 0;
+    opacity: 0;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    pointer-events: none;
 }
 
 .profile-logout {
@@ -563,18 +668,18 @@ body {
     color: #b91c1c;
 }
 
-.profile-display-id-line {
+.profile-user-id-line {
     padding: 8px 12px;
     margin-bottom: 4px;
     border-bottom: 1px solid #e5e7eb;
     font-size: 12px;
     color: #374151;
 }
-.profile-display-id-label {
+.profile-user-id-label {
     margin-right: 6px;
     color: #6b7280;
 }
-.profile-display-id-value {
+.profile-user-id-value {
     font-weight: 600;
     font-family: monospace;
 }

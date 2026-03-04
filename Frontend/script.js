@@ -1,5 +1,6 @@
 let loginMode = "guest";
 let userEmail = null;
+let userUserId = null;  // User ID string (A1, C2...) for chat naming (A1.1, A1.2)
 let chats = [];
 let currentChat = null;
 let globalDocuments = [];
@@ -40,6 +41,39 @@ function closeProfileDropdown() {
     if (trigger) trigger.setAttribute("aria-expanded", "false");
 }
 
+function changePhoto() {
+    var input = document.getElementById("photoUpload");
+    if (!input || !input.files || !input.files.length) return;
+    var file = input.files[0];
+    if (!file.type || !file.type.startsWith("image/")) {
+        alert("Please choose an image file (e.g. JPG, PNG).");
+        input.value = "";
+        return;
+    }
+    var reader = new FileReader();
+    reader.onload = function () {
+        var profileImg = document.getElementById("profilePhoto");
+        if (profileImg && reader.result) {
+            profileImg.src = reader.result;
+            if (userEmail) {
+                try { localStorage.setItem("profilePhoto_" + userEmail, reader.result); } catch (e) {}
+            }
+        }
+    };
+    reader.readAsDataURL(file);
+    input.value = "";
+}
+
+function loadSavedProfilePhoto() {
+    if (!userEmail) return;
+    var profileImg = document.getElementById("profilePhoto");
+    if (!profileImg) return;
+    try {
+        var saved = localStorage.getItem("profilePhoto_" + userEmail);
+        if (saved) profileImg.src = saved;
+    } catch (e) {}
+}
+
 /* ---------------- LOGIN POPUP ---------------- */
 
 function openLoginPopup() {
@@ -68,12 +102,13 @@ function showCompanyLogin() {
 
 async function loadUserData(email) {
     try {
-        // Fetch user display_id (A1, C2, etc.) for profile
+        // Fetch user_id (A1, C2, etc.) for profile and chat naming
         try {
             var infoRes = await fetch(API_BASE + "/user-info?email=" + encodeURIComponent(email));
             var info = await infoRes.json();
-            var dispEl = document.getElementById("profileDisplayId");
-            if (dispEl) dispEl.textContent = info.display_id || "--";
+            userUserId = info.user_id || null;
+            var dispEl = document.getElementById("profileUserId");
+            if (dispEl) dispEl.textContent = userUserId || "--";
         } catch (e) {
             console.error("Failed to load user info", e);
         }
@@ -82,7 +117,7 @@ async function loadUserData(email) {
         const chatRes = await fetch(API_BASE + "/chats/" + encodeURIComponent(email));
         const chatData = await chatRes.json();
 
-        chats = chatData.chats || [];
+        chats = (chatData.chats || []).map(function (c) { return typeof c === "string" ? c : c.name; });
         renderChats();
 
         // Load global documents (only for personal mode) - backend returns only global (chat_id null)
@@ -139,6 +174,7 @@ function loginPersonal() {
     document.getElementById("documentSection").style.display = "block";
 
     closeLoginPopup();
+    loadSavedProfilePhoto();
 
     // Load existing chats & documents (and user id)
     loadUserData(email);
@@ -173,6 +209,7 @@ function loginCompany() {
     if (panel) panel.style.display = "none";
 
     closeLoginPopup();
+    loadSavedProfilePhoto();
 
     // Load existing chats (company mode) and user id
     loadUserData(email);
@@ -197,18 +234,53 @@ function logout() {
     var panel = document.getElementById("chatDocsPanel");
     if (panel) panel.style.display = "none";
     document.getElementById("documentSection").style.display = "none";
-    var dispEl = document.getElementById("profileDisplayId");
+    userUserId = null;
+    var dispEl = document.getElementById("profileUserId");
     if (dispEl) dispEl.textContent = "--";
     renderGlobalDocs();
 }
 
 /* ---------------- CHAT LOGIC ---------------- */
 
-function createChat() {
-    const chatName = "Chat " + (chats.length + 1);
+async function createChat() {
+    if (!userEmail) {
+        alert("Please sign in first");
+        return;
+    }
+    // Refresh user_id from server (e.g. after first message created the user)
+    if (!userUserId) {
+        try {
+            var r = await fetch(API_BASE + "/user-info?email=" + encodeURIComponent(userEmail));
+            var info = await r.json();
+            userUserId = info.user_id || null;
+            var dispEl = document.getElementById("profileUserId");
+            if (dispEl) dispEl.textContent = userUserId || "--";
+        } catch (e) {}
+    }
+    // Name: "New Chat 1", "New Chat 2", ... (next unused number)
+    var n = 1;
+    while (chats.indexOf("New Chat " + n) !== -1) n++;
+    var chatName = "New Chat " + n;
+    try {
+        var createRes = await fetch(API_BASE + "/chats", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ email: userEmail, name: chatName, mode: loginMode || "personal" })
+        });
+        var createData = await createRes.json();
+        if (!createRes.ok && createRes.status !== 200) {
+            alert(createData.detail || "Failed to create chat");
+            return;
+        }
+    } catch (err) {
+        console.error("Create chat error", err);
+        alert("Failed to create chat. Is the backend running?");
+        return;
+    }
     chats.push(chatName);
     chatDocuments[chatName] = [];
     renderChats();
+    await selectChat(chatName);
 }
 
 function renderChats() {
@@ -217,10 +289,126 @@ function renderChats() {
 
     chats.forEach(chat => {
         const li = document.createElement("li");
-        li.innerText = chat;
-        li.onclick = () => selectChat(chat);
+        li.className = "chat-list-item";
+        li.setAttribute("data-chat-name", chat);
+
+        const nameWrap = document.createElement("span");
+        nameWrap.className = "chat-name-wrap";
+        const nameSpan = document.createElement("span");
+        nameSpan.className = "chat-name-text";
+        nameSpan.textContent = chat;
+        nameWrap.appendChild(nameSpan);
+
+        const actions = document.createElement("div");
+        actions.className = "chat-item-actions";
+        const menuBtn = document.createElement("button");
+        menuBtn.type = "button";
+        menuBtn.className = "chat-menu-btn";
+        menuBtn.setAttribute("aria-label", "Chat options");
+        menuBtn.innerHTML = "&#8942;";
+        const dropdown = document.createElement("div");
+        dropdown.className = "chat-menu-dropdown";
+        dropdown.setAttribute("role", "menu");
+        const renameBtn = document.createElement("button");
+        renameBtn.type = "button";
+        renameBtn.className = "chat-menu-rename";
+        renameBtn.textContent = "Rename";
+        renameBtn.setAttribute("role", "menuitem");
+        dropdown.appendChild(renameBtn);
+        actions.appendChild(menuBtn);
+        actions.appendChild(dropdown);
+
+        li.appendChild(nameWrap);
+        li.appendChild(actions);
+
+        nameWrap.onclick = function (e) { e.stopPropagation(); selectChat(chat); };
+        menuBtn.onclick = function (e) {
+            e.stopPropagation();
+            closeAllChatMenus();
+            dropdown.classList.toggle("open");
+        };
+        renameBtn.onclick = function (e) {
+            e.stopPropagation();
+            dropdown.classList.remove("open");
+            startRenameChat(li, chat, nameSpan);
+        };
+
         chatList.appendChild(li);
     });
+}
+
+function closeAllChatMenus() {
+    document.querySelectorAll(".chat-menu-dropdown.open").forEach(function (el) { el.classList.remove("open"); });
+}
+
+function startRenameChat(li, oldName, nameSpan) {
+    const input = document.createElement("input");
+    input.type = "text";
+    input.className = "chat-name-edit";
+    input.value = oldName;
+    const wrap = li.querySelector(".chat-name-wrap");
+    wrap.replaceChild(input, nameSpan);
+    input.focus();
+    input.select();
+
+    function finishRename() {
+        const newName = input.value.trim();
+        wrap.removeChild(input);
+        const span = document.createElement("span");
+        span.className = "chat-name-text";
+        span.textContent = newName ? newName : oldName;
+        wrap.appendChild(span);
+        span.onclick = function (e) { e.stopPropagation(); selectChat(newName || oldName); };
+
+        if (newName && newName !== oldName) {
+            renameChatOnServer(oldName, newName);
+        }
+        input.removeEventListener("blur", finishRename);
+        input.removeEventListener("keydown", onKey);
+    }
+
+    function onKey(e) {
+        if (e.key === "Enter") { e.preventDefault(); finishRename(); }
+        if (e.key === "Escape") {
+            e.preventDefault();
+            input.value = oldName;
+            finishRename();
+        }
+    }
+
+    input.addEventListener("blur", finishRename);
+    input.addEventListener("keydown", onKey);
+}
+
+async function renameChatOnServer(oldName, newName) {
+    if (!userEmail) return;
+    try {
+        const res = await fetch(API_BASE + "/chats/rename", {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ email: userEmail, old_name: oldName, new_name: newName })
+        });
+        const data = await res.json();
+        if (res.ok && data.ok) {
+            const idx = chats.indexOf(oldName);
+            if (idx !== -1) chats[idx] = newName;
+            if (currentChat === oldName) {
+                currentChat = newName;
+                document.getElementById("chatTitle").innerText = newName;
+            }
+            if (chatDocuments[oldName] !== undefined) {
+                chatDocuments[newName] = chatDocuments[oldName];
+                delete chatDocuments[oldName];
+            }
+            renderChats();
+        } else {
+            const msg = Array.isArray(data.detail) ? data.detail.map(function (x) { return x.msg || x; }).join(" ") : (data.detail || "Rename failed");
+            alert(msg);
+        }
+    } catch (err) {
+        console.error("Rename error", err);
+        alert("Rename failed. Is the backend running?");
+    }
 }
 
 async function selectChat(chatName) {
@@ -571,3 +759,8 @@ async function uploadDocument() {
         alert("Upload failed");
     }
 }
+
+// Close chat dropdowns when clicking outside
+document.addEventListener("click", function () {
+    closeAllChatMenus();
+});

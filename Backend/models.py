@@ -22,6 +22,7 @@ class Chat(Base):
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String)
     user_id = Column(Integer, ForeignKey("users.id"))
+    display_id = Column(String, nullable=True, index=True)  # A1, C2... who created this chat
 
     user = relationship("User", back_populates="chats")
     messages = relationship("Message", back_populates="chat")
@@ -34,6 +35,7 @@ class Message(Base):
     role = Column(String)
     content = Column(Text)
     chat_id = Column(Integer, ForeignKey("chats.id"))
+    display_id = Column(String, nullable=True, index=True)  # A1, C2... user who sent this message
 
     chat = relationship("Chat", back_populates="messages")
 
@@ -46,6 +48,7 @@ class Document(Base):
     file_path = Column(String, nullable=True)  # path to stored PDF for preview
     user_id = Column(Integer, ForeignKey("users.id"))
     chat_id = Column(Integer, ForeignKey("chats.id"), nullable=True)  # null = global doc
+    display_id = Column(String, nullable=True, index=True)  # A1, C2... user who uploaded this doc
 
     user = relationship("User", back_populates="documents")
     chunks = relationship("DocumentChunk", back_populates="document")

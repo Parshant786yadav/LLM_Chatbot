@@ -57,6 +57,14 @@ def _run_db_migrations():
                         conn.execute(text("ALTER TABLE users ADD COLUMN display_id VARCHAR"))
                 except Exception:
                     pass
+                for table, col in [("chats", "display_id"), ("messages", "display_id"), ("documents", "display_id")]:
+                    try:
+                        r = conn.execute(text(f"PRAGMA table_info({table})"))
+                        cols = [row[1] for row in r.fetchall()]
+                        if col not in cols:
+                            conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} VARCHAR"))
+                    except Exception:
+                        pass
             migration_engine.dispose()
             return
         except OperationalError as e:
@@ -103,6 +111,18 @@ class ChatRequest(BaseModel):
     email: Optional[str] = None
     chat: Optional[str] = None
     message: str
+
+
+class RenameChatRequest(BaseModel):
+    email: str
+    old_name: str
+    new_name: str
+
+
+class CreateChatRequest(BaseModel):
+    email: str
+    name: str
+    mode: str  # "personal" or "company" for user display_id when creating user
 
 
 def _get_next_display_id(db, mode: str) -> str:
@@ -192,16 +212,17 @@ def chat(req: ChatRequest):
         )
 
         if not chat:
-            chat = Chat(name=chat_name, user_id=user.id)
+            chat = Chat(name=chat_name, user_id=user.id, display_id=user.display_id)
             db.add(chat)
             db.commit()
             db.refresh(chat)
 
-        # 3️⃣ Save user message
+        # 3️⃣ Save user message (with user id so you can find which user sent it)
         user_message = Message(
             role="user",
             content=req.message,
-            chat_id=chat.id
+            chat_id=chat.id,
+            display_id=user.display_id,
         )
         db.add(user_message)
         db.commit()
@@ -280,11 +301,12 @@ User: {req.message}"""
         if reply is None:
             raise last_error or RuntimeError("No reply from model")
 
-        # 6️⃣ Save model reply
+        # 6️⃣ Save model reply (with user id so you can find which user's chat it belongs to)
         model_message = Message(
             role="model",
             content=reply,
-            chat_id=chat.id
+            chat_id=chat.id,
+            display_id=user.display_id,
         )
         db.add(model_message)
         db.commit()
@@ -350,8 +372,8 @@ async def upload_document(
                 db.refresh(chat_row)
             chat_id = chat_row.id
 
-        # create document record first to get id
-        document = Document(name=file.filename, user_id=user.id, chat_id=chat_id)
+        # create document record (with user id so you can find which user uploaded it)
+        document = Document(name=file.filename, user_id=user.id, chat_id=chat_id, display_id=user.display_id)
         db.add(document)
         db.commit()
         db.refresh(document)
@@ -400,24 +422,73 @@ def get_chats(email: str):
         chats = db.query(Chat).filter(Chat.user_id == user.id).all()
 
         return {
-            "chats": [chat.name for chat in chats]
+            "chats": [{"name": c.name, "display_id": c.display_id} for c in chats]
         }
 
     finally:
         db.close()
 
 
+@app.post("/chats")
+def create_chat(body: CreateChatRequest):
+    """Create a chat (and user if needed) so the chat exists in DB before first message. Fixes rename on new accounts."""
+    db = SessionLocal()
+    try:
+        user = db.query(User).filter(User.email == body.email).first()
+        if not user:
+            display_id = _get_next_display_id(db, body.mode)
+            user = User(email=body.email, display_id=display_id)
+            db.add(user)
+            db.commit()
+            db.refresh(user)
+        existing = db.query(Chat).filter(Chat.user_id == user.id, Chat.name == body.name).first()
+        if existing:
+            return {"ok": True, "name": body.name}
+        chat = Chat(name=body.name, user_id=user.id, display_id=user.display_id)
+        db.add(chat)
+        db.commit()
+        return {"ok": True, "name": body.name}
+    finally:
+        db.close()
+
+
+@app.patch("/chats/rename")
+def rename_chat(body: RenameChatRequest):
+    """Rename a chat for the given user. new_name must be unique for that user."""
+    db = SessionLocal()
+    try:
+        user = db.query(User).filter(User.email == body.email).first()
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+        chat = db.query(Chat).filter(Chat.user_id == user.id, Chat.name == body.old_name).first()
+        if not chat:
+            raise HTTPException(status_code=404, detail="Chat not found")
+        new_name = (body.new_name or "").strip()
+        if not new_name:
+            raise HTTPException(status_code=400, detail="New name cannot be empty")
+        if new_name == body.old_name:
+            return {"ok": True, "name": new_name}
+        existing = db.query(Chat).filter(Chat.user_id == user.id, Chat.name == new_name).first()
+        if existing:
+            raise HTTPException(status_code=400, detail="A chat with this name already exists")
+        chat.name = new_name
+        db.commit()
+        return {"ok": True, "name": new_name}
+    finally:
+        db.close()
+
+
 @app.get("/user-info")
 def get_user_info(email: str = ""):
-    """Get user's display_id (A1, C2, etc.) and email for profile."""
+    """Get user's user_id (A1, C2, etc.) and email for profile."""
     if not email:
-        return {"email": "", "display_id": None}
+        return {"email": "", "user_id": None}
     db = SessionLocal()
     try:
         user = db.query(User).filter(User.email == email).first()
         if not user:
-            return {"email": email, "display_id": None}
-        return {"email": user.email, "display_id": user.display_id}
+            return {"email": email, "user_id": None}
+        return {"email": user.email, "user_id": user.display_id}
     finally:
         db.close()
 
@@ -468,7 +539,7 @@ def get_documents(email: str):
 
         return {
             "documents": [
-                {"id": doc.id, "name": doc.name, "has_preview": bool(doc.file_path and os.path.isfile(doc.file_path))}
+                {"id": doc.id, "name": doc.name, "user_id": doc.display_id, "has_preview": bool(doc.file_path and os.path.isfile(doc.file_path))}
                 for doc in docs
             ]
         }
@@ -503,7 +574,7 @@ def get_chat_documents(email: str, chat_name: str):
 
         return {
             "documents": [
-                {"id": doc.id, "name": doc.name, "has_preview": bool(doc.file_path and os.path.isfile(doc.file_path))}
+                {"id": doc.id, "name": doc.name, "user_id": doc.display_id, "has_preview": bool(doc.file_path and os.path.isfile(doc.file_path))}
                 for doc in docs
             ]
         }
@@ -542,7 +613,7 @@ def get_messages(email: str, chat_name: str):
 
         return {
             "messages": [
-                {"role": msg.role, "content": msg.content}
+                {"role": msg.role, "content": msg.content, "user_id": msg.display_id}
                 for msg in messages
             ]
         }
