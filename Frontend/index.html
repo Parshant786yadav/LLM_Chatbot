@@ -48,13 +48,19 @@
             <ul id="chatList"></ul>
         </div>
 
-        <!-- PERSONAL MODE ONLY - Global Documents stay in sidebar -->
+        <!-- Documents: Global (personal) or Company (company login) -->
         <div id="documentSection">
             <div class="section documents-block">
-                <h4>Global Documents</h4>
-                <input type="file" id="globalUpload" onchange="uploadDocument()">
-                <button type="button" class="documents-toggle" id="globalDocsToggle" onclick="toggleGlobalDocsList()">Documents uploaded 0</button>
-                <ul id="globalDocs" class="doc-list doc-list-collapsed"></ul>
+                <h4 id="documentSectionTitle">Global Documents</h4>
+                <div id="documentUploadWrap">
+                    <input type="file" id="globalUpload" onchange="uploadDocument()">
+                </div>
+                <div id="globalDocsBlock">
+                    <button type="button" class="documents-toggle" id="globalDocsToggle" onclick="toggleGlobalDocsList()">Documents uploaded 0</button>
+                    <ul id="globalDocs" class="doc-list doc-list-collapsed"></ul>
+                </div>
+                <p id="companyDocHintHr" class="company-doc-hint" style="display: none;">Upload PDFs here. Colleagues with the same company email (e.g. user@company.com) can ask questions about these documents in chat.</p>
+                <p id="companyDocHintEmployee" class="company-doc-hint" style="display: none;">Only HR (hr@yourcompany) can upload documents. You can ask questions in chat to get details from the documents HR has uploaded.</p>
             </div>
         </div>
 

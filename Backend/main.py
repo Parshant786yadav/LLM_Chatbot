@@ -16,7 +16,7 @@ from models import Base, User, Chat, Message
 from fastapi import UploadFile, File, Form
 from pypdf import PdfReader
 from rag import split_text, create_embedding
-from models import Document, DocumentChunk
+from models import Document, DocumentChunk, Company
 import json
 from rag import cosine_similarity
 
@@ -63,6 +63,15 @@ def _run_db_migrations():
                         cols = [row[1] for row in r.fetchall()]
                         if col not in cols:
                             conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} VARCHAR"))
+                    except Exception:
+                        pass
+                # Company support: users.user_type, users.company_id, documents.company_id
+                for table, col in [("users", "user_type"), ("users", "company_id"), ("documents", "company_id")]:
+                    try:
+                        r = conn.execute(text(f"PRAGMA table_info({table})"))
+                        cols = [row[1] for row in r.fetchall()]
+                        if col not in cols:
+                            conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} INTEGER" if col == "company_id" else f"ALTER TABLE {table} ADD COLUMN {col} VARCHAR"))
                     except Exception:
                         pass
             migration_engine.dispose()
@@ -123,6 +132,26 @@ class CreateChatRequest(BaseModel):
     email: str
     name: str
     mode: str  # "personal" or "company" for user display_id when creating user
+
+
+def _extract_domain(email: str) -> Optional[str]:
+    """Extract domain from email (e.g. hr@company.com -> company.com). Returns None if no @."""
+    if not email or "@" not in email:
+        return None
+    return email.strip().split("@")[-1].lower()
+
+
+def _get_or_create_company(db, domain: str):
+    """Get or create Company by domain. Returns Company or None."""
+    if not domain:
+        return None
+    company = db.query(Company).filter(Company.domain == domain).first()
+    if not company:
+        company = Company(domain=domain)
+        db.add(company)
+        db.commit()
+        db.refresh(company)
+    return company
 
 
 def _get_next_display_id(db, mode: str) -> str:
@@ -198,9 +227,25 @@ def chat(req: ChatRequest):
         if not user:
             display_id = _get_next_display_id(db, req.mode)
             user = User(email=email, display_id=display_id)
+            if (req.mode or "").strip().lower() == "company":
+                domain = _extract_domain(email)
+                if domain:
+                    company = _get_or_create_company(db, domain)
+                    if company:
+                        user.user_type = "company"
+                        user.company_id = company.id
             db.add(user)
             db.commit()
             db.refresh(user)
+        elif (req.mode or "").strip().lower() == "company" and user.company_id is None:
+            domain = _extract_domain(email)
+            if domain:
+                company = _get_or_create_company(db, domain)
+                if company:
+                    user.user_type = "company"
+                    user.company_id = company.id
+                    db.commit()
+                    db.refresh(user)
 
         # 2️⃣ Get or create chat
         chat_name = req.chat or "default"
@@ -236,16 +281,26 @@ def chat(req: ChatRequest):
         )
         history_user_contents = [msg.content for msg in history if msg.role == "user"]
 
-        # ---------------- RAG PART (global docs + this chat's docs) ----------------
-        chunks = (
-            db.query(DocumentChunk)
-            .join(Document)
-            .filter(
-                Document.user_id == user.id,
-                or_(Document.chat_id.is_(None), Document.chat_id == chat.id),
+        # ---------------- RAG PART (global docs + this chat's docs, or company docs) ----------------
+        if user.company_id is not None:
+            # Company user: use only company-shared documents (all users @same domain access these)
+            chunks = (
+                db.query(DocumentChunk)
+                .join(Document)
+                .filter(Document.company_id == user.company_id)
+                .all()
             )
-            .all()
-        )
+        else:
+            # Personal: user's global docs + this chat's docs
+            chunks = (
+                db.query(DocumentChunk)
+                .join(Document)
+                .filter(
+                    Document.user_id == user.id,
+                    or_(Document.chat_id.is_(None), Document.chat_id == chat.id),
+                )
+                .all()
+            )
 
         context = ""
         if chunks:
@@ -333,6 +388,7 @@ async def upload_document(
     file: UploadFile = File(...),
     email: str = Form("guest"),
     chat: Optional[str] = Form(None),
+    mode: str = Form("personal"),
 ):
 
     db = SessionLocal()
@@ -348,32 +404,63 @@ async def upload_document(
         for page in reader.pages:
             full_text += page.extract_text() or ""
 
-        # get user (upload is personal-only, so new users get A1, A2, ...)
+        is_company = (mode or "").strip().lower() == "company"
+        # Company uploads: only hr@companyname can upload; others get 403
+        if is_company and not _is_hr_email(email):
+            raise HTTPException(
+                status_code=403,
+                detail="Only HR (hr@yourcompany) can upload company documents. You can ask questions in chat.",
+            )
         user = db.query(User).filter(User.email == email).first()
         if not user:
-            display_id = _get_next_display_id(db, "personal")
+            display_id = _get_next_display_id(db, "company" if is_company else "personal")
             user = User(email=email, display_id=display_id)
+            if is_company:
+                domain = _extract_domain(email)
+                if domain:
+                    company = _get_or_create_company(db, domain)
+                    if company:
+                        user.user_type = "company"
+                        user.company_id = company.id
             db.add(user)
             db.commit()
             db.refresh(user)
+        elif is_company and user.company_id is None:
+            domain = _extract_domain(email)
+            if domain:
+                company = _get_or_create_company(db, domain)
+                if company:
+                    user.user_type = "company"
+                    user.company_id = company.id
+                    db.commit()
+                    db.refresh(user)
 
-        # resolve chat_id if this is a chat document
+        # Company uploads: document is shared with all users @same domain (no chat)
+        # Personal: resolve chat_id if this is a chat document
         chat_id = None
-        if chat:
+        company_id = None
+        if is_company and user.company_id:
+            company_id = user.company_id
+        elif chat:
             chat_row = (
                 db.query(Chat)
                 .filter(Chat.user_id == user.id, Chat.name == chat)
                 .first()
             )
             if not chat_row:
-                chat_row = Chat(name=chat, user_id=user.id)
+                chat_row = Chat(name=chat, user_id=user.id, display_id=user.display_id)
                 db.add(chat_row)
                 db.commit()
                 db.refresh(chat_row)
             chat_id = chat_row.id
 
-        # create document record (with user id so you can find which user uploaded it)
-        document = Document(name=file.filename, user_id=user.id, chat_id=chat_id, display_id=user.display_id)
+        document = Document(
+            name=file.filename,
+            user_id=user.id,
+            chat_id=chat_id,
+            company_id=company_id,
+            display_id=user.display_id,
+        )
         db.add(document)
         db.commit()
         db.refresh(document)
@@ -438,6 +525,13 @@ def create_chat(body: CreateChatRequest):
         if not user:
             display_id = _get_next_display_id(db, body.mode)
             user = User(email=body.email, display_id=display_id)
+            if (body.mode or "").strip().lower() == "company":
+                domain = _extract_domain(body.email)
+                if domain:
+                    company = _get_or_create_company(db, domain)
+                    if company:
+                        user.user_type = "company"
+                        user.company_id = company.id
             db.add(user)
             db.commit()
             db.refresh(user)

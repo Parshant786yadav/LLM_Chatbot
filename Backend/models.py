@@ -10,7 +10,16 @@ class User(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     email = Column(String, unique=True, index=True)
-    display_id = Column(String, unique=True, nullable=True, index=True)  # A1, A2... (personal) or C1, C2... (company)
+
+    display_id = Column(String, unique=True, nullable=True, index=True)
+
+    # personal or company
+    user_type = Column(String, default="personal")
+
+    # company relation
+    company_id = Column(Integer, ForeignKey("companies.id"), nullable=True)
+
+    company = relationship("Company", back_populates="users")
 
     chats = relationship("Chat", back_populates="user")
     documents = relationship("Document", back_populates="user")
@@ -40,17 +49,27 @@ class Message(Base):
     chat = relationship("Chat", back_populates="messages")
 
 
+
 class Document(Base):
     __tablename__ = "documents"
 
     id = Column(Integer, primary_key=True, index=True)
+
     name = Column(String)
-    file_path = Column(String, nullable=True)  # path to stored PDF for preview
+    file_path = Column(String, nullable=True)
+
     user_id = Column(Integer, ForeignKey("users.id"))
-    chat_id = Column(Integer, ForeignKey("chats.id"), nullable=True)  # null = global doc
-    display_id = Column(String, nullable=True, index=True)  # A1, C2... user who uploaded this doc
+
+    # NEW (company support)
+    company_id = Column(Integer, ForeignKey("companies.id"), nullable=True)
+
+    chat_id = Column(Integer, ForeignKey("chats.id"), nullable=True)
+
+    display_id = Column(String, nullable=True, index=True)
 
     user = relationship("User", back_populates="documents")
+    company = relationship("Company", back_populates="documents")
+
     chunks = relationship("DocumentChunk", back_populates="document")
 
 
@@ -63,3 +82,13 @@ class DocumentChunk(Base):
     embedding = Column(Text)
 
     document = relationship("Document", back_populates="chunks")
+
+
+class Company(Base):
+    __tablename__ = "companies"
+
+    id = Column(Integer, primary_key=True, index=True)
+    domain = Column(String, unique=True, index=True)
+
+    users = relationship("User", back_populates="company")
+    documents = relationship("Document", back_populates="company")

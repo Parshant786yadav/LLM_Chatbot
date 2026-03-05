@@ -170,8 +170,13 @@ function loginPersonal() {
     nameEl.textContent = email;
     nameEl.title = email;
 
-    // Show document section
+    // Show document section (personal: Global Documents + list)
     document.getElementById("documentSection").style.display = "block";
+    document.getElementById("documentSectionTitle").textContent = "Global Documents";
+    document.getElementById("documentUploadWrap").style.display = "block";
+    document.getElementById("globalDocsBlock").style.display = "block";
+    document.getElementById("companyDocHintHr").style.display = "none";
+    document.getElementById("companyDocHintEmployee").style.display = "none";
 
     closeLoginPopup();
     loadSavedProfilePhoto();
@@ -202,8 +207,14 @@ function loginCompany() {
     nameEl.textContent = email;
     nameEl.title = email;
 
-    // Hide document section for company
-    document.getElementById("documentSection").style.display = "none";
+    // Show document section for company: only HR (hr@...) can upload; others can only use chat
+    document.getElementById("documentSection").style.display = "block";
+    document.getElementById("documentSectionTitle").textContent = "Company Documents";
+    document.getElementById("globalDocsBlock").style.display = "none";
+    var isHr = email && email.trim().toLowerCase().startsWith("hr@");
+    document.getElementById("documentUploadWrap").style.display = isHr ? "block" : "none";
+    document.getElementById("companyDocHintHr").style.display = isHr ? "block" : "none";
+    document.getElementById("companyDocHintEmployee").style.display = isHr ? "none" : "block";
 
     const panel = document.getElementById("chatDocsPanel");
     if (panel) panel.style.display = "none";
@@ -242,12 +253,9 @@ function logout() {
 
 /* ---------------- CHAT LOGIC ---------------- */
 
-async function createChat() {
-    if (!userEmail) {
-        alert("Please sign in first");
-        return;
-    }
-    // Refresh user_id from server (e.g. after first message created the user)
+/** Creates a new chat on server and in local state. Returns the new chat name or null on failure. Does not select it. */
+async function createNewChatAndReturnName() {
+    if (!userEmail) return null;
     if (!userUserId) {
         try {
             var r = await fetch(API_BASE + "/user-info?email=" + encodeURIComponent(userEmail));
@@ -257,7 +265,6 @@ async function createChat() {
             if (dispEl) dispEl.textContent = userUserId || "--";
         } catch (e) {}
     }
-    // Name: "New Chat 1", "New Chat 2", ... (next unused number)
     var n = 1;
     while (chats.indexOf("New Chat " + n) !== -1) n++;
     var chatName = "New Chat " + n;
@@ -268,17 +275,26 @@ async function createChat() {
             body: JSON.stringify({ email: userEmail, name: chatName, mode: loginMode || "personal" })
         });
         var createData = await createRes.json();
-        if (!createRes.ok && createRes.status !== 200) {
-            alert(createData.detail || "Failed to create chat");
-            return;
-        }
+        if (!createRes.ok && createRes.status !== 200) return null;
     } catch (err) {
         console.error("Create chat error", err);
-        alert("Failed to create chat. Is the backend running?");
-        return;
+        return null;
     }
     chats.push(chatName);
     chatDocuments[chatName] = [];
+    return chatName;
+}
+
+async function createChat() {
+    if (!userEmail) {
+        alert("Please sign in first");
+        return;
+    }
+    var chatName = await createNewChatAndReturnName();
+    if (!chatName) {
+        alert("Failed to create chat. Is the backend running?");
+        return;
+    }
     renderChats();
     await selectChat(chatName);
 }
@@ -289,7 +305,7 @@ function renderChats() {
 
     chats.forEach(chat => {
         const li = document.createElement("li");
-        li.className = "chat-list-item";
+        li.className = "chat-list-item" + (chat === currentChat ? " chat-list-item-active" : "");
         li.setAttribute("data-chat-name", chat);
 
         const nameWrap = document.createElement("span");
@@ -416,6 +432,7 @@ async function selectChat(chatName) {
     currentChat = chatName;
     document.getElementById("chatTitle").innerText = chatName;
     document.getElementById("chatArea").innerHTML = "";
+    renderChats();
 
     // Show chat documents panel and load docs when in personal mode
     var panel = document.getElementById("chatDocsPanel");
@@ -631,7 +648,7 @@ function removeChatDoc(docName) {
     }
 })();
 
-function sendMessage() {
+async function sendMessage() {
 
     const input = document.getElementById("messageInput");
     const message = input.value;
@@ -639,8 +656,23 @@ function sendMessage() {
     if (!message || !message.trim()) return;
 
     if (!currentChat) {
-        alert("Create or select a chat first");
-        return;
+        if (!userEmail) {
+            alert("Please sign in first");
+            return;
+        }
+        var newName = await createNewChatAndReturnName();
+        if (!newName) {
+            alert("Could not create chat. Is the backend running?");
+            return;
+        }
+        currentChat = newName;
+        document.getElementById("chatTitle").innerText = currentChat;
+        var panel = document.getElementById("chatDocsPanel");
+        if (loginMode === "personal" && panel) {
+            panel.style.display = "block";
+            renderChatDocs();
+        }
+        renderChats();
     }
 
     addMessage(message, "user");
@@ -736,24 +768,45 @@ async function uploadDocument() {
         return;
     }
 
+    if (!userEmail) {
+        alert("Please sign in first");
+        return;
+    }
+
     const formData = new FormData();
     formData.append("file", file);
-    formData.append("email", userEmail || "guest");
+    formData.append("email", userEmail);
+    formData.append("mode", loginMode === "company" ? "company" : "personal");
+    // Global/company uploads: no chat. (Chat-specific docs use the Chat Documents panel in personal mode.)
 
     try {
-        const response = await fetch("http://localhost:8000/upload", {
+        const response = await fetch(API_BASE + "/upload", {
             method: "POST",
             body: formData
         });
 
         const data = await response.json();
 
-        if (!data.error && data.message) {
+        if (!response.ok) {
+            alert(data.detail || data.error || "Upload failed");
+            fileInput.value = "";
+            return;
+        }
+        if (data.error) {
+            alert(data.error);
+            fileInput.value = "";
+            return;
+        }
+        if (loginMode === "personal" && data.message) {
             globalDocuments.push({ id: data.document_id, name: file.name, file: file, has_preview: true });
             renderGlobalDocs();
         }
-        alert(data.message || data.error);
-
+        if (loginMode === "company") {
+            alert("Document uploaded. Everyone with your company email domain can ask questions about it in chat.");
+        } else {
+            alert(data.message || "Uploaded");
+        }
+        fileInput.value = "";
     } catch (error) {
         console.error("Upload error:", error);
         alert("Upload failed");
