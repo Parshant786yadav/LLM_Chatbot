@@ -89,6 +89,7 @@ class Company(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     domain = Column(String, unique=True, index=True)
+    show_doc_count_to_employees = Column(Integer, default=0)  # 0=False, 1=True; when True, employees see "Company documents: N"
 
     users = relationship("User", back_populates="company")
     documents = relationship("Document", back_populates="company")

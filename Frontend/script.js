@@ -5,6 +5,7 @@ let chats = [];
 let currentChat = null;
 let globalDocuments = [];
 let chatDocuments = {};
+let companyDocuments = [];  // HR company docs (same-domain users access via chat only)
 var API_BASE = "http://localhost:8000";
 
 /* ---------------- PROFILE DROPDOWN ---------------- */
@@ -127,7 +128,36 @@ async function loadUserData(email) {
             const docList = docData.documents || [];
             globalDocuments = docList.map(function (d) { return { id: d.id, name: d.name, file: null, has_preview: d.has_preview }; });
             renderGlobalDocs();
+        }
+        // Load company documents for HR (company mode, hr@...)
+        if (loginMode === "company" && email && email.trim().toLowerCase().startsWith("hr@")) {
+            try {
+                const companyRes = await fetch(`${API_BASE}/documents/company/${encodeURIComponent(email)}`);
+                const companyData = await companyRes.json();
+                companyDocuments = (companyData.documents || []).map(function (d) { return { id: d.id, name: d.name, has_preview: d.has_preview }; });
+                renderCompanyDocs();
+                var setRes = await fetch(`${API_BASE}/company/settings?email=${encodeURIComponent(email)}`);
+                var setData = await setRes.json().catch(function () { return {}; });
+                var check = document.getElementById("companyShowCountCheck");
+                if (check) check.checked = !!setData.show_doc_count_to_employees;
+            } catch (e) {
+                companyDocuments = [];
+            }
+        }
+        // Load company document count for employees (when HR enabled "show count to employees")
+        if (loginMode === "company" && email && !email.trim().toLowerCase().startsWith("hr@")) {
+            try {
+                const countRes = await fetch(`${API_BASE}/documents/company/count?email=${encodeURIComponent(email)}`);
+                const countData = await countRes.json().catch(function () { return {}; });
+                var countEl = document.getElementById("companyDocCountEmployee");
+                if (countEl && countData.visible) {
+                    countEl.textContent = "Company documents: " + (countData.count || 0);
+                    countEl.style.display = "block";
+                }
+            } catch (e) {}
+        }
 
+        if (loginMode === "personal") {
             // Load chat documents for each chat so count/list show after re-login
             for (let i = 0; i < chats.length; i++) {
                 const chatName = chats[i];
@@ -175,6 +205,11 @@ function loginPersonal() {
     document.getElementById("documentSectionTitle").textContent = "Global Documents";
     document.getElementById("documentUploadWrap").style.display = "block";
     document.getElementById("globalDocsBlock").style.display = "block";
+    var companyDocsBlock = document.getElementById("companyDocsBlock");
+    if (companyDocsBlock) companyDocsBlock.style.display = "none";
+    var companyShowCountWrap = document.getElementById("companyShowCountWrap");
+    if (companyShowCountWrap) companyShowCountWrap.style.display = "none";
+    document.getElementById("companyDocCountEmployee").style.display = "none";
     document.getElementById("companyDocHintHr").style.display = "none";
     document.getElementById("companyDocHintEmployee").style.display = "none";
 
@@ -214,6 +249,11 @@ function loginCompany() {
     var isHr = email && email.trim().toLowerCase().startsWith("hr@");
     document.getElementById("documentUploadWrap").style.display = isHr ? "block" : "none";
     document.getElementById("companyDocHintHr").style.display = isHr ? "block" : "none";
+    var companyShowCountWrap = document.getElementById("companyShowCountWrap");
+    if (companyShowCountWrap) companyShowCountWrap.style.display = isHr ? "block" : "none";
+    var companyDocsBlock = document.getElementById("companyDocsBlock");
+    if (companyDocsBlock) companyDocsBlock.style.display = isHr ? "block" : "none";
+    document.getElementById("companyDocCountEmployee").style.display = "none";
     document.getElementById("companyDocHintEmployee").style.display = isHr ? "none" : "block";
 
     const panel = document.getElementById("chatDocsPanel");
@@ -237,6 +277,7 @@ function logout() {
     chats = [];
     globalDocuments = [];
     chatDocuments = {};
+    companyDocuments = [];
     currentChat = null;
 
     document.getElementById("chatList").innerHTML = "";
@@ -575,7 +616,7 @@ function renderGlobalDocs() {
         removeBtn.title = "Remove document";
         removeBtn.onclick = function (e) {
             e.stopPropagation();
-            removeGlobalDoc(doc.name);
+            removeGlobalDoc(doc.id);
         };
         li.appendChild(link);
         li.appendChild(removeBtn);
@@ -583,10 +624,103 @@ function renderGlobalDocs() {
     });
 }
 
-function removeGlobalDoc(docName) {
+async function removeGlobalDoc(docId) {
     if (!confirm("Do you want to remove this document?")) return;
-    globalDocuments = globalDocuments.filter(function (d) { return d.name !== docName; });
+    if (!userEmail) return;
+    try {
+        var res = await fetch(API_BASE + "/documents/" + docId + "?email=" + encodeURIComponent(userEmail), { method: "DELETE" });
+        if (!res.ok) {
+            var data = await res.json().catch(function () { return {}; });
+            alert(data.detail || "Could not delete document");
+            return;
+        }
+    } catch (e) {
+        console.error(e);
+        alert("Could not delete document");
+        return;
+    }
+    globalDocuments = globalDocuments.filter(function (d) { return d.id !== docId; });
     renderGlobalDocs();
+}
+
+function toggleCompanyDocsList() {
+    var list = document.getElementById("companyDocsList");
+    if (list) list.classList.toggle("doc-list-collapsed");
+}
+
+function renderCompanyDocs() {
+    var list = document.getElementById("companyDocsList");
+    var toggleBtn = document.getElementById("companyDocsToggle");
+    if (!list || !toggleBtn) return;
+    var n = companyDocuments.length;
+    toggleBtn.textContent = "Documents uploaded " + n;
+    list.innerHTML = "";
+    list.classList.add("doc-list-collapsed");
+    companyDocuments.forEach(function (doc) {
+        var li = document.createElement("li");
+        li.className = "doc-item";
+        var link = document.createElement("a");
+        link.className = "doc-link";
+        link.textContent = doc.name;
+        link.title = (doc.has_preview !== false) ? "Open preview" : "Preview not available";
+        link.href = "#";
+        link.onclick = function (e) {
+            e.preventDefault();
+            openDocPreview(doc);
+        };
+        var removeBtn = document.createElement("button");
+        removeBtn.type = "button";
+        removeBtn.className = "doc-remove-btn";
+        removeBtn.innerHTML = "&times;";
+        removeBtn.title = "Remove document";
+        removeBtn.onclick = function (e) {
+            e.stopPropagation();
+            removeCompanyDoc(doc.id);
+        };
+        li.appendChild(link);
+        li.appendChild(removeBtn);
+        list.appendChild(li);
+    });
+}
+
+async function removeCompanyDoc(docId) {
+    if (!confirm("Do you want to remove this document?")) return;
+    if (!userEmail) return;
+    try {
+        var res = await fetch(API_BASE + "/documents/" + docId + "?email=" + encodeURIComponent(userEmail), { method: "DELETE" });
+        if (!res.ok) {
+            var data = await res.json().catch(function () { return {}; });
+            alert(data.detail || "Could not delete document");
+            return;
+        }
+    } catch (e) {
+        console.error(e);
+        alert("Could not delete document");
+        return;
+    }
+    companyDocuments = companyDocuments.filter(function (d) { return d.id !== docId; });
+    renderCompanyDocs();
+}
+
+async function toggleCompanyShowCountToEmployees() {
+    var check = document.getElementById("companyShowCountCheck");
+    if (!check || !userEmail) return;
+    try {
+        var res = await fetch(API_BASE + "/company/settings", {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ email: userEmail, show_doc_count_to_employees: check.checked })
+        });
+        if (!res.ok) {
+            var data = await res.json().catch(function () { return {}; });
+            alert(data.detail || "Could not update setting");
+            check.checked = !check.checked;
+        }
+    } catch (e) {
+        console.error(e);
+        check.checked = !check.checked;
+        alert("Could not update setting");
+    }
 }
 
 function renderChatDocs() {
@@ -619,7 +753,7 @@ function renderChatDocs() {
         removeBtn.title = "Remove document";
         removeBtn.onclick = function (e) {
             e.stopPropagation();
-            removeChatDoc(doc.name);
+            removeChatDoc(doc.id);
         };
         li.appendChild(link);
         li.appendChild(removeBtn);
@@ -627,10 +761,22 @@ function renderChatDocs() {
     });
 }
 
-function removeChatDoc(docName) {
+async function removeChatDoc(docId) {
     if (!confirm("Do you want to remove this document?")) return;
-    if (!currentChat) return;
-    chatDocuments[currentChat] = chatDocuments[currentChat].filter(function (d) { return d.name !== docName; });
+    if (!currentChat || !userEmail) return;
+    try {
+        var res = await fetch(API_BASE + "/documents/" + docId + "?email=" + encodeURIComponent(userEmail), { method: "DELETE" });
+        if (!res.ok) {
+            var data = await res.json().catch(function () { return {}; });
+            alert(data.detail || "Could not delete document");
+            return;
+        }
+    } catch (e) {
+        console.error(e);
+        alert("Could not delete document");
+        return;
+    }
+    chatDocuments[currentChat] = (chatDocuments[currentChat] || []).filter(function (d) { return d.id !== docId; });
     renderChatDocs();
 }
 
@@ -785,7 +931,15 @@ async function uploadDocument() {
             body: formData
         });
 
-        const data = await response.json();
+        var data = {};
+        try {
+            var ct = response.headers.get("Content-Type") || "";
+            if (ct.includes("application/json")) {
+                data = await response.json();
+            }
+        } catch (e) {
+            console.error("Upload response parse error", e);
+        }
 
         if (!response.ok) {
             alert(data.detail || data.error || "Upload failed");
@@ -802,6 +956,10 @@ async function uploadDocument() {
             renderGlobalDocs();
         }
         if (loginMode === "company") {
+            if (data.document_id != null) {
+                companyDocuments.push({ id: data.document_id, name: file.name, has_preview: true });
+                renderCompanyDocs();
+            }
             alert("Document uploaded. Everyone with your company email domain can ask questions about it in chat.");
         } else {
             alert(data.message || "Uploaded");
@@ -809,7 +967,7 @@ async function uploadDocument() {
         fileInput.value = "";
     } catch (error) {
         console.error("Upload error:", error);
-        alert("Upload failed");
+        alert("Upload failed. Check the console and that the backend is running.");
     }
 }
 

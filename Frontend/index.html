@@ -60,6 +60,15 @@
                     <ul id="globalDocs" class="doc-list doc-list-collapsed"></ul>
                 </div>
                 <p id="companyDocHintHr" class="company-doc-hint" style="display: none;">Upload PDFs here. Colleagues with the same company email (e.g. user@company.com) can ask questions about these documents in chat.</p>
+                <label id="companyShowCountWrap" class="company-show-count-wrap" style="display: none;">
+                    <input type="checkbox" id="companyShowCountCheck" onchange="toggleCompanyShowCountToEmployees()">
+                    <span>Show document count to all employees</span>
+                </label>
+                <div id="companyDocsBlock" style="display: none;">
+                    <button type="button" class="documents-toggle" id="companyDocsToggle" onclick="toggleCompanyDocsList()">Documents uploaded 0</button>
+                    <ul id="companyDocsList" class="doc-list doc-list-collapsed"></ul>
+                </div>
+                <p id="companyDocCountEmployee" class="company-doc-hint company-doc-count-employee" style="display: none;"></p>
                 <p id="companyDocHintEmployee" class="company-doc-hint" style="display: none;">Only HR (hr@yourcompany) can upload documents. You can ask questions in chat to get details from the documents HR has uploaded.</p>
             </div>
         </div>

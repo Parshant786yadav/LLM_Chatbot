@@ -251,6 +251,25 @@ body {
     line-height: 1.4;
 }
 
+.company-show-count-wrap {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 8px 0 0;
+    font-size: 12px;
+    color: rgba(255, 255, 255, 0.9);
+    cursor: pointer;
+}
+
+.company-show-count-wrap input[type="checkbox"] {
+    cursor: pointer;
+}
+
+.company-doc-count-employee {
+    font-weight: 500;
+    color: rgba(255, 255, 255, 0.95);
+}
+
 .documents-toggle {
     display: block;
     width: 100%;

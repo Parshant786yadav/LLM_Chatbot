@@ -65,7 +65,7 @@ def _run_db_migrations():
                             conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} VARCHAR"))
                     except Exception:
                         pass
-                # Company support: users.user_type, users.company_id, documents.company_id
+                # Company support: users.user_type, users.company_id, documents.company_id, companies.show_doc_count_to_employees
                 for table, col in [("users", "user_type"), ("users", "company_id"), ("documents", "company_id")]:
                     try:
                         r = conn.execute(text(f"PRAGMA table_info({table})"))
@@ -74,6 +74,13 @@ def _run_db_migrations():
                             conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} INTEGER" if col == "company_id" else f"ALTER TABLE {table} ADD COLUMN {col} VARCHAR"))
                     except Exception:
                         pass
+                try:
+                    r = conn.execute(text("PRAGMA table_info(companies)"))
+                    cols = [row[1] for row in r.fetchall()]
+                    if "show_doc_count_to_employees" not in cols:
+                        conn.execute(text("ALTER TABLE companies ADD COLUMN show_doc_count_to_employees INTEGER DEFAULT 0"))
+                except Exception:
+                    pass
             migration_engine.dispose()
             return
         except OperationalError as e:
@@ -116,7 +123,7 @@ def home():
     return {"status": "Backend running successfully 🚀"}
 
 class ChatRequest(BaseModel):
-    mode: str
+    mode: Optional[str] = "personal"  # "personal" or "company" – must be "company" for same-domain doc access
     email: Optional[str] = None
     chat: Optional[str] = None
     message: str
@@ -134,11 +141,21 @@ class CreateChatRequest(BaseModel):
     mode: str  # "personal" or "company" for user display_id when creating user
 
 
+class CompanySettingsUpdate(BaseModel):
+    email: str
+    show_doc_count_to_employees: bool
+
+
 def _extract_domain(email: str) -> Optional[str]:
     """Extract domain from email (e.g. hr@company.com -> company.com). Returns None if no @."""
     if not email or "@" not in email:
         return None
     return email.strip().split("@")[-1].lower()
+
+
+def _is_hr_email(email: str) -> bool:
+    """True if email is HR (hr@companyname) – only HR can upload company documents."""
+    return bool(email and str(email).strip().lower().startswith("hr@"))
 
 
 def _get_or_create_company(db, domain: str):
@@ -223,11 +240,12 @@ def chat(req: ChatRequest):
         # 1️⃣ Get or create user
         email = req.email or "guest"
 
+        mode = (req.mode or "personal").strip().lower()
         user = db.query(User).filter(User.email == email).first()
         if not user:
-            display_id = _get_next_display_id(db, req.mode)
+            display_id = _get_next_display_id(db, req.mode or "personal")
             user = User(email=email, display_id=display_id)
-            if (req.mode or "").strip().lower() == "company":
+            if mode == "company":
                 domain = _extract_domain(email)
                 if domain:
                     company = _get_or_create_company(db, domain)
@@ -237,7 +255,7 @@ def chat(req: ChatRequest):
             db.add(user)
             db.commit()
             db.refresh(user)
-        elif (req.mode or "").strip().lower() == "company" and user.company_id is None:
+        elif mode == "company" and (getattr(user, "company_id", None) is None):
             domain = _extract_domain(email)
             if domain:
                 company = _get_or_create_company(db, domain)
@@ -597,12 +615,18 @@ def get_document_file(document_id: int, email: str):
         if not user:
             raise HTTPException(status_code=404, detail="User not found")
 
-        doc = db.query(Document).filter(
-            Document.id == document_id,
-            Document.user_id == user.id,
-        ).first()
+        doc = db.query(Document).filter(Document.id == document_id).first()
         if not doc or not doc.file_path or not os.path.isfile(doc.file_path):
             raise HTTPException(status_code=404, detail="Document not found")
+        # Allow: owner (personal doc) or same-company user (company doc)
+        is_owner = doc.user_id == user.id
+        same_company = (
+            doc.company_id is not None
+            and getattr(user, "company_id", None) is not None
+            and user.company_id == doc.company_id
+        )
+        if not is_owner and not same_company:
+            raise HTTPException(status_code=403, detail="Document not found")
 
         return FileResponse(
             doc.file_path,
@@ -610,6 +634,122 @@ def get_document_file(document_id: int, email: str):
             filename=doc.name,
         )
 
+    finally:
+        db.close()
+
+
+@app.delete("/documents/{document_id}")
+def delete_document(document_id: int, email: str):
+    """Delete one document by id. Allowed if user owns it (personal) or is HR and it's a company doc."""
+    db = SessionLocal()
+    try:
+        user = db.query(User).filter(User.email == email).first()
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+        doc = db.query(Document).filter(Document.id == document_id).first()
+        if not doc:
+            raise HTTPException(status_code=404, detail="Document not found")
+        # Allow: owner (personal doc) or HR deleting a company doc of their company
+        is_owner = doc.user_id == user.id
+        is_hr_company_doc = (
+            doc.company_id is not None
+            and user.company_id == doc.company_id
+            and _is_hr_email(email)
+        )
+        if not is_owner and not is_hr_company_doc:
+            raise HTTPException(status_code=403, detail="Not allowed to delete this document")
+        # Delete chunks first (no cascade in model)
+        db.query(DocumentChunk).filter(DocumentChunk.document_id == document_id).delete()
+        if doc.file_path and os.path.isfile(doc.file_path):
+            try:
+                os.remove(doc.file_path)
+            except OSError:
+                pass
+        db.delete(doc)
+        db.commit()
+        return {"ok": True}
+    finally:
+        db.close()
+
+
+@app.get("/company/settings")
+def get_company_settings(email: str = ""):
+    """Get company setting show_doc_count_to_employees (for HR to load checkbox)."""
+    if not email:
+        return {"show_doc_count_to_employees": False}
+    db = SessionLocal()
+    try:
+        user = db.query(User).filter(User.email == email).first()
+        if not user or not user.company_id:
+            return {"show_doc_count_to_employees": False}
+        company = db.query(Company).filter(Company.id == user.company_id).first()
+        if not company:
+            return {"show_doc_count_to_employees": False}
+        return {"show_doc_count_to_employees": bool(getattr(company, "show_doc_count_to_employees", 0))}
+    finally:
+        db.close()
+
+
+@app.patch("/company/settings")
+def update_company_settings(body: CompanySettingsUpdate):
+    """HR only: set whether employees can see company document count."""
+    db = SessionLocal()
+    try:
+        if not _is_hr_email(body.email):
+            raise HTTPException(status_code=403, detail="Only HR can update this setting")
+        user = db.query(User).filter(User.email == body.email).first()
+        if not user or not user.company_id:
+            raise HTTPException(status_code=404, detail="Company not found")
+        company = db.query(Company).filter(Company.id == user.company_id).first()
+        if not company:
+            raise HTTPException(status_code=404, detail="Company not found")
+        company.show_doc_count_to_employees = 1 if body.show_doc_count_to_employees else 0
+        db.commit()
+        return {"show_doc_count_to_employees": body.show_doc_count_to_employees}
+    finally:
+        db.close()
+
+
+@app.get("/documents/company/count")
+def get_company_documents_count(email: str = ""):
+    """Return company document count. visible=True only when HR enabled 'show count to employees'."""
+    if not email:
+        return {"count": 0, "visible": False}
+    db = SessionLocal()
+    try:
+        user = db.query(User).filter(User.email == email).first()
+        if not user or not user.company_id:
+            return {"count": 0, "visible": False}
+        company = db.query(Company).filter(Company.id == user.company_id).first()
+        if not company or not getattr(company, "show_doc_count_to_employees", 0):
+            return {"count": 0, "visible": False}
+        n = db.query(Document).filter(Document.company_id == user.company_id).count()
+        return {"count": n, "visible": True}
+    finally:
+        db.close()
+
+
+@app.get("/documents/company/{email}")
+def get_company_documents(email: str):
+    """List company documents (for HR only). Same-domain users access via chat only."""
+    db = SessionLocal()
+    try:
+        if not _is_hr_email(email):
+            return {"documents": []}
+        user = db.query(User).filter(User.email == email).first()
+        if not user or not user.company_id:
+            return {"documents": []}
+        docs = (
+            db.query(Document)
+            .filter(Document.company_id == user.company_id)
+            .all()
+        )
+        return {
+            "documents": [
+                {"id": doc.id, "name": doc.name, "has_preview": bool(doc.file_path and os.path.isfile(doc.file_path))}
+                for doc in docs
+            ]
+        }
     finally:
         db.close()
 
@@ -624,10 +764,14 @@ def get_documents(email: str):
         if not user:
             return {"documents": []}
 
-        # Only global documents (chat_id is None)
+        # Only global documents (chat_id is None, not company docs)
         docs = (
             db.query(Document)
-            .filter(Document.user_id == user.id, Document.chat_id.is_(None))
+            .filter(
+                Document.user_id == user.id,
+                Document.chat_id.is_(None),
+                Document.company_id.is_(None),
+            )
             .all()
         )
 
