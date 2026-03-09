@@ -712,13 +712,37 @@ def update_company_settings(body: CompanySettingsUpdate):
 
 @app.get("/documents/company/count")
 def get_company_documents_count(email: str = ""):
-    """Return company document count. visible=True only when HR enabled 'show count to employees'."""
+    """Return company document count. visible=True only when HR enabled 'show count to employees'.
+    If employee has no company_id yet, link them to company by email domain so count can be shown."""
     if not email:
         return {"count": 0, "visible": False}
     db = SessionLocal()
     try:
         user = db.query(User).filter(User.email == email).first()
-        if not user or not user.company_id:
+        if not user:
+            # First time employee loading: create user and attach to company by domain
+            domain = _extract_domain(email)
+            if not domain:
+                return {"count": 0, "visible": False}
+            company = _get_or_create_company(db, domain)
+            if not company:
+                return {"count": 0, "visible": False}
+            display_id = _get_next_display_id(db, "company")
+            user = User(email=email, display_id=display_id, user_type="company", company_id=company.id)
+            db.add(user)
+            db.commit()
+            db.refresh(user)
+        elif getattr(user, "company_id", None) is None:
+            # Existing user (e.g. from personal) logging in as company: attach to company by domain
+            domain = _extract_domain(email)
+            if domain:
+                company = _get_or_create_company(db, domain)
+                if company:
+                    user.user_type = "company"
+                    user.company_id = company.id
+                    db.commit()
+                    db.refresh(user)
+        if not user.company_id:
             return {"count": 0, "visible": False}
         company = db.query(Company).filter(Company.id == user.company_id).first()
         if not company or not getattr(company, "show_doc_count_to_employees", 0):
