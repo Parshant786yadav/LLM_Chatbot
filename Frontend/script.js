@@ -532,8 +532,9 @@ async function uploadChatDoc() {
     const fileInput = document.getElementById("chatUpload");
     const file = fileInput.files[0];
     if (!file) return;
-    if (file.type !== "application/pdf") {
-        alert("Only PDF is supported");
+    var ok = file.type === "application/pdf" || (file.type && file.type.indexOf("image/") === 0);
+    if (!ok) {
+        alert("Only PDF and images (JPG, PNG, GIF, etc.) are supported");
         return;
     }
 
@@ -541,6 +542,7 @@ async function uploadChatDoc() {
     formData.append("file", file);
     formData.append("email", userEmail || "guest");
     formData.append("chat", currentChat);
+    formData.append("mode", loginMode === "company" ? "company" : "personal");
 
     try {
         const response = await fetch("http://localhost:8000/upload", {

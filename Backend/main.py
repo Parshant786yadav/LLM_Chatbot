@@ -16,6 +16,28 @@ from models import Base, User, Chat, Message
 from fastapi import UploadFile, File, Form
 from pypdf import PdfReader
 from rag import split_text, create_embedding
+
+# Image support: OCR for text extraction (EasyOCR – no Tesseract required)
+_easyocr_reader = None
+
+def _get_easyocr_reader():
+    """Lazy-load EasyOCR reader once (loads model on first image upload)."""
+    global _easyocr_reader
+    if _easyocr_reader is None:
+        try:
+            import easyocr
+            _easyocr_reader = easyocr.Reader(["en"], gpu=False)
+        except Exception:
+            _easyocr_reader = False
+    return _easyocr_reader if _easyocr_reader else None
+
+try:
+    from PIL import Image
+    import numpy as np
+    _IMAGE_OCR_AVAILABLE = True
+except ImportError:
+    _IMAGE_OCR_AVAILABLE = False
+    np = None
 from models import Document, DocumentChunk, Company
 import json
 from rag import cosine_similarity
@@ -401,6 +423,45 @@ def _sanitize_filename(name: str) -> str:
     return re.sub(r'[^\w\s\-\.]', '_', name).strip() or "document"
 
 
+# PDF and image types for upload
+_ALLOWED_PDF = {"application/pdf"}
+_ALLOWED_IMAGE = {
+    "image/jpeg", "image/jpg", "image/png", "image/gif", "image/webp",
+    "image/bmp", "image/tiff", "image/x-tiff", "image/pjpeg",
+}
+_ALLOWED_CONTENT_TYPES = _ALLOWED_PDF | _ALLOWED_IMAGE
+
+
+def _extract_text_from_image(content: bytes, filename: str) -> str:
+    """Extract text from image using EasyOCR. Returns placeholder if OCR unavailable or fails."""
+    if not _IMAGE_OCR_AVAILABLE or np is None:
+        return f"Image document: {filename}"
+    try:
+        reader = _get_easyocr_reader()
+        if reader is None:
+            return f"Image document: {filename}"
+        img = Image.open(io.BytesIO(content))
+        img = img.convert("RGB")
+        arr = np.array(img)
+        result = reader.readtext(arr)
+        text = " ".join([item[1] for item in result if len(item) > 1]).strip()
+        return text or f"Image document: {filename}"
+    except Exception:
+        return f"Image document: {filename}"
+
+
+def _media_type_for_path(file_path: str) -> str:
+    """Infer media type from file extension for FileResponse."""
+    ext = (os.path.splitext(file_path)[1] or "").lower()
+    m = {
+        ".pdf": "application/pdf",
+        ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+        ".png": "image/png", ".gif": "image/gif", ".webp": "image/webp",
+        ".bmp": "image/bmp", ".tiff": "image/tiff", ".tif": "image/tiff",
+    }
+    return m.get(ext, "application/octet-stream")
+
+
 @app.post("/upload")
 async def upload_document(
     file: UploadFile = File(...),
@@ -412,15 +473,19 @@ async def upload_document(
     db = SessionLocal()
 
     try:
-        if file.content_type != "application/pdf":
-            return {"error": "Only PDF supported"}
+        content_type = (file.content_type or "").strip().lower()
+        if content_type not in _ALLOWED_CONTENT_TYPES:
+            return {"error": "Only PDF and images (e.g. JPG, PNG, GIF, WebP) are supported"}
 
         content = await file.read()
-        reader = PdfReader(io.BytesIO(content))
 
-        full_text = ""
-        for page in reader.pages:
-            full_text += page.extract_text() or ""
+        if content_type == "application/pdf":
+            reader = PdfReader(io.BytesIO(content))
+            full_text = ""
+            for page in reader.pages:
+                full_text += page.extract_text() or ""
+        else:
+            full_text = _extract_text_from_image(content, file.filename or "image")
 
         is_company = (mode or "").strip().lower() == "company"
         # Company uploads: only hr@companyname can upload; others get 403
@@ -494,8 +559,8 @@ async def upload_document(
         document.file_path = file_path
         db.commit()
 
-        # split and embed
-        chunks = split_text(full_text)
+        # split and embed (ensure at least one chunk so doc is findable)
+        chunks = split_text(full_text) if full_text.strip() else [f"Document: {file.filename or 'upload'}"]
 
         for chunk in chunks:
             embedding = create_embedding(chunk)
@@ -628,9 +693,10 @@ def get_document_file(document_id: int, email: str):
         if not is_owner and not same_company:
             raise HTTPException(status_code=403, detail="Document not found")
 
+        media_type = _media_type_for_path(doc.file_path)
         return FileResponse(
             doc.file_path,
-            media_type="application/pdf",
+            media_type=media_type,
             filename=doc.name,
         )
 
