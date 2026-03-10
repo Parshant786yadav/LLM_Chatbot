@@ -825,8 +825,9 @@ async function sendMessage() {
 
     addMessage(message, "user");
     input.value = "";
+    addTypingIndicator();
 
-    fetch("http://localhost:8000/chat", {
+    fetch(API_BASE + "/chat", {
         method: "POST",
         headers: {
             "Content-Type": "application/json"
@@ -862,13 +863,41 @@ async function sendMessage() {
         });
     })
     .then(function (data) {
+        removeTypingIndicator();
         var reply = (data && data.reply != null) ? String(data.reply) : "No reply from server.";
         addMessage(reply, "bot");
     })
     .catch(function (error) {
         console.error("Error:", error);
+        removeTypingIndicator();
         addMessage("Error: " + (error.message || "Server unreachable. Is the backend running on http://localhost:8000?"), "bot");
     });
+}
+
+function addTypingIndicator() {
+    var chatArea = document.getElementById("chatArea");
+    if (!chatArea) return;
+    var wrapper = document.createElement("div");
+    wrapper.className = "typing-indicator-wrapper";
+    wrapper.setAttribute("data-typing", "1");
+    wrapper.style.display = "flex";
+    wrapper.style.alignItems = "flex-start";
+    wrapper.style.marginBottom = "10px";
+    var avatar = document.createElement("img");
+    avatar.className = "message-avatar";
+    avatar.src = "https://cdn-icons-png.flaticon.com/512/4712/4712027.png";
+    var messageDiv = document.createElement("div");
+    messageDiv.className = "message bot typing-indicator";
+    messageDiv.innerText = "typing...";
+    wrapper.appendChild(avatar);
+    wrapper.appendChild(messageDiv);
+    chatArea.appendChild(wrapper);
+    chatArea.scrollTop = chatArea.scrollHeight;
+}
+
+function removeTypingIndicator() {
+    var el = document.querySelector(".typing-indicator-wrapper");
+    if (el) el.remove();
 }
 
 function addMessage(text, role) {

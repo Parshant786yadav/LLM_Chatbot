@@ -10,5 +10,5 @@ numpy>=1.24.0
 Pillow>=10.0.0
 easyocr>=1.7.0
 
-# LLM: Groq (replaces Gemini)
+
 groq>=0.4.0

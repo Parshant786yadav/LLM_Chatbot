@@ -466,6 +466,11 @@ body {
     border: 1px solid #ccc;
 }
 
+.message.typing-indicator {
+    font-style: italic;
+    color: #6b7280;
+}
+
 .input-box {
     display: flex;
     padding: 15px;

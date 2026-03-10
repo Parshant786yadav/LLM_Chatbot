@@ -225,17 +225,24 @@ def _call_groq_with_history(groq_client: Groq, model: str, history_user_contents
     return "No reply"
 
 
+# Max conversation turns to send to the LLM (user+assistant pairs) so the chat "remembers" most of the thread
+_MAX_CHAT_HISTORY_TURNS = 25  # last 25 exchanges (50 messages)
+
 def _call_groq_with_system(
     groq_client: Groq,
     model: str,
     system_instruction: str,
-    history_user_contents: list[str],
+    history_messages: list[dict],
     final_prompt: str,
 ) -> str:
-    """Call Groq with system role + history. Talks naturally; uses doc context when provided."""
+    """Call Groq with system role + full conversation history (user + assistant)."""
     messages = [{"role": "system", "content": system_instruction}]
-    for c in history_user_contents:
-        messages.append({"role": "user", "content": c})
+    for m in history_messages:
+        role = m.get("role", "user")
+        if role == "model":
+            role = "assistant"
+        if role in ("user", "assistant") and m.get("content"):
+            messages.append({"role": role, "content": m["content"]})
     messages.append({"role": "user", "content": final_prompt})
     response = groq_client.chat.completions.create(
         model=model,
@@ -312,13 +319,17 @@ def chat(req: ChatRequest):
         db.add(user_message)
         db.commit()
 
-        # 4️⃣ Reconstruct conversation history (user messages only, for context)
+        # 4️⃣ Reconstruct conversation history (all messages for full memory)
         history = (
             db.query(Message)
             .filter(Message.chat_id == chat.id)
             .order_by(Message.id)
             .all()
         )
+        # Full dialogue for LLM: last N turns (user + assistant), excluding the current user message (it goes in final_prompt)
+        history_excluding_current = history[:-1] if len(history) > 1 else []
+        history_tail = history_excluding_current[-(_MAX_CHAT_HISTORY_TURNS * 2) :]
+        history_messages = [{"role": msg.role, "content": msg.content or ""} for msg in history_tail]
         history_user_contents = [msg.content for msg in history if msg.role == "user"]
 
         # ---------------- RAG PART (global docs + this chat's docs, or company docs) ----------------
@@ -344,7 +355,10 @@ def chat(req: ChatRequest):
 
         context = ""
         if chunks:
-            query_embedding = create_embedding(req.message)
+            # Use many recent user messages for RAG so follow-ups and long threads still retrieve the right doc context
+            rag_query_parts = history_user_contents[-10:] if history_user_contents else [req.message]
+            rag_query = " ".join(rag_query_parts).strip() or req.message
+            query_embedding = create_embedding(rag_query)
             scored_chunks = []
             for chunk in chunks:
                 chunk_embedding = json.loads(chunk.embedding)
@@ -380,7 +394,7 @@ User: {req.message}"""
         for model in (CHAT_MODEL_PRIMARY, CHAT_MODEL_FALLBACK):
             try:
                 reply = _call_groq_with_system(
-                    client, model, system_instruction, history_user_contents, final_prompt
+                    client, model, system_instruction, history_messages, final_prompt
                 )
                 break
             except Exception as e:
