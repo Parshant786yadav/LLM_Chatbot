@@ -16,6 +16,20 @@ from models import Base, User, Chat, Message
 from fastapi import UploadFile, File, Form
 from pypdf import PdfReader
 from rag import split_text, create_embedding
+from authlib.integrations.starlette_client import OAuth
+from starlette.config import Config
+from fastapi import Request
+from fastapi.responses import RedirectResponse
+from starlette.middleware.sessions import SessionMiddleware
+from starlette.staticfiles import StaticFiles
+import urllib.parse
+import smtplib
+import random
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+
+# Frontend directory (sibling of Backend) – served at / so one server is enough
+FRONTEND_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "Frontend")
 
 # Image support: OCR for text extraction (EasyOCR – no Tesseract required)
 _easyocr_reader = None
@@ -140,16 +154,16 @@ def startup():
 
 
 app.add_middleware(
+    SessionMiddleware,
+    secret_key=os.getenv("SESSION_SECRET_KEY", "change-me-in-production-use-env"),
+)
+app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-@app.get("/")
-def home():
-    return {"status": "Backend running successfully 🚀"}
 
 class ChatRequest(BaseModel):
     mode: Optional[str] = "personal"  # "personal" or "company" – must be "company" for same-domain doc access
@@ -183,6 +197,107 @@ class AddAdminRequest(BaseModel):
 class RemoveAdminRequest(BaseModel):
     email: str  # current admin (caller)
     remove_admin_email: str  # email to remove from admins
+
+
+class SendOtpRequest(BaseModel):
+    email: str
+
+
+class VerifyOtpRequest(BaseModel):
+    email: str
+    otp: str
+    mode: Optional[str] = "personal"  # "personal" or "company"
+
+
+# In-memory OTP store: { email_lower: { "otp": "123456", "expires_at": unix_ts } }
+_otp_store: dict = {}
+OTP_EXPIRE_SECONDS = 600  # 10 minutes
+SECRET_TEST_OTP = "882644"  # Secret OTP for testing; accepts login without email OTP
+
+
+def _send_otp_email(to_email: str, otp: str) -> None:
+    """Send OTP via Gmail SMTP. Raises on failure."""
+    sender = os.getenv("GMAIL_OTP_EMAIL", "").strip()
+    password = os.getenv("GMAIL_OTP_APP_PASSWORD", "").strip()
+    if not sender or not password:
+        raise ValueError("GMAIL_OTP_EMAIL and GMAIL_OTP_APP_PASSWORD must be set in .env")
+    msg = MIMEMultipart("alternative")
+    msg["Subject"] = "Your login OTP"
+    msg["From"] = sender
+    msg["To"] = to_email
+    text = f"Your one-time password is: {otp}\n\nIt expires in 10 minutes.\n\nIf you didn't request this, ignore this email."
+    msg.attach(MIMEText(text, "plain"))
+    with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
+        server.login(sender, password)
+        server.sendmail(sender, to_email, msg.as_string())
+
+
+def _otp_cleanup_expired():
+    """Remove expired OTPs from store."""
+    now = time.time()
+    to_remove = [k for k, v in _otp_store.items() if v["expires_at"] < now]
+    for k in to_remove:
+        del _otp_store[k]
+
+
+@app.post("/auth/send-otp")
+def send_otp(body: SendOtpRequest):
+    """Send a 6-digit OTP to the given email. Uses Gmail SMTP (set GMAIL_OTP_EMAIL and GMAIL_OTP_APP_PASSWORD in .env)."""
+    email = (body.email or "").strip().lower()
+    if not email or "@" not in email:
+        raise HTTPException(status_code=400, detail="Valid email required")
+    _otp_cleanup_expired()
+    otp = "".join(str(random.randint(0, 9)) for _ in range(6))
+    _otp_store[email] = {"otp": otp, "expires_at": time.time() + OTP_EXPIRE_SECONDS}
+    try:
+        _send_otp_email(email, otp)
+    except Exception as e:
+        if email in _otp_store:
+            del _otp_store[email]
+        raise HTTPException(status_code=500, detail="Failed to send OTP: " + str(e))
+    return {"ok": True, "message": "OTP sent to your email"}
+
+
+@app.post("/auth/verify-otp")
+def verify_otp(body: VerifyOtpRequest):
+    """Verify OTP for the given email. On success, returns ok (user can log in with that email)."""
+    email = (body.email or "").strip().lower()
+    otp = (body.otp or "").strip()
+    if not email or "@" not in email:
+        raise HTTPException(status_code=400, detail="Valid email required")
+    if not otp:
+        raise HTTPException(status_code=400, detail="OTP required")
+    _otp_cleanup_expired()
+    # Accept secret test OTP or real email OTP
+    if otp == SECRET_TEST_OTP:
+        if email in _otp_store:
+            del _otp_store[email]
+    else:
+        stored = _otp_store.get(email)
+        if not stored:
+            raise HTTPException(status_code=400, detail="OTP expired or not found. Please request a new one.")
+        if stored["otp"] != otp:
+            raise HTTPException(status_code=400, detail="Invalid OTP")
+        del _otp_store[email]
+    # Ensure user exists (same as after Google login)
+    db = SessionLocal()
+    try:
+        user = db.query(User).filter(User.email == email).first()
+        if not user:
+            display_id = _get_next_display_id(db, (body.mode or "personal").strip().lower())
+            user = User(email=email, display_id=display_id)
+            if (body.mode or "").strip().lower() == "company":
+                domain = _extract_domain(email)
+                if domain:
+                    company = _get_or_create_company(db, domain)
+                    if company:
+                        user.user_type = "company"
+                        user.company_id = company.id
+            db.add(user)
+            db.commit()
+    finally:
+        db.close()
+    return {"ok": True}
 
 
 def _extract_domain(email: str) -> Optional[str]:
@@ -1088,3 +1203,54 @@ def get_messages(email: str, chat_name: str):
 
     finally:
         db.close()
+
+
+
+config = Config('.env')
+
+oauth = OAuth(config)
+
+oauth.register(
+    name="google",
+    client_id=os.getenv("GOOGLE_CLIENT_ID"),
+    client_secret=os.getenv("GOOGLE_CLIENT_SECRET"),
+    server_metadata_url="https://accounts.google.com/.well-known/openid-configuration",
+    client_kwargs={
+        "scope": "openid email profile"
+    }
+)
+
+@app.get("/login/google")
+async def login_google(request: Request):
+    redirect_uri = request.url_for("auth_google")
+    return await oauth.google.authorize_redirect(request, redirect_uri)
+
+@app.get("/auth/google")
+async def auth_google(request: Request):
+
+    token = await oauth.google.authorize_access_token(request)
+    user = token["userinfo"]
+
+    email = user["email"]
+
+    db = SessionLocal()
+
+    try:
+        user_db = db.query(User).filter(User.email == email).first()
+
+        if not user_db:
+            display_id = _get_next_display_id(db, "personal")
+            user_db = User(email=email, display_id=display_id)
+            db.add(user_db)
+            db.commit()
+
+        frontend_url = os.getenv("FRONTEND_URL", "http://localhost:8000")
+        return RedirectResponse(frontend_url.rstrip("/") + "/?email=" + urllib.parse.quote(email))
+
+    finally:
+        db.close()
+
+
+# Serve frontend static files at / (index.html, script.js, style.css). API routes above take precedence.
+if os.path.isdir(FRONTEND_DIR):
+    app.mount("/", StaticFiles(directory=FRONTEND_DIR, html=True), name="frontend")

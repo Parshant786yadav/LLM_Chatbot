@@ -12,7 +12,7 @@ let currentChat = null;
 let globalDocuments = [];
 let chatDocuments = {};
 let companyDocuments = [];  // HR company docs (same-domain users access via chat only)
-var API_BASE = "http://localhost:8000";
+var API_BASE = (window.location.protocol === "http:" || window.location.protocol === "https:") ? "" : "http://localhost:8000";
 
 /* ---------------- PROFILE DROPDOWN ---------------- */
 
@@ -83,26 +83,139 @@ function loadSavedProfilePhoto() {
 
 /* ---------------- LOGIN POPUP ---------------- */
 
+var loginPopupMode = "personal";  // "personal" or "company"
+
 function openLoginPopup() {
     document.getElementById("loginPopup").style.display = "flex";
+    showLoginStep1();
 }
 
 function closeLoginPopup() {
     document.getElementById("loginPopup").style.display = "none";
 }
 
+function showLoginStep1() {
+    document.getElementById("loginStep1").style.display = "block";
+    document.getElementById("loginStep2").style.display = "none";
+}
+
+function resetOtpStep() {
+    document.getElementById("loginOtpSection").style.display = "none";
+    document.getElementById("loginOtpInput").value = "";
+    var btn = document.getElementById("loginEmailBtn");
+    btn.textContent = "Send OTP";
+    btn.onclick = doSendOtp;
+}
+
 function showPersonalLogin() {
-    document.getElementById("loginForm").innerHTML = `
-        <input type="email" id="personalEmail" placeholder="Personal Email">
-        <button onclick="loginPersonal()">Login</button>
-    `;
+    loginPopupMode = "personal";
+    document.getElementById("loginStep1").style.display = "none";
+    document.getElementById("loginStep2").style.display = "block";
+    document.getElementById("loginStep2Title").textContent = "Personal Login";
+    document.getElementById("loginEmailInput").placeholder = "Enter your email";
+    document.getElementById("loginEmailInput").value = "";
+    resetOtpStep();
+    var input = document.getElementById("loginEmailInput");
+    input.onkeydown = function (e) { if (e.key === "Enter") { e.preventDefault(); doSendOtp(); } };
+    input.focus();
 }
 
 function showCompanyLogin() {
-    document.getElementById("loginForm").innerHTML = `
-        <input type="email" id="companyEmail" placeholder="name@company.com">
-        <button onclick="loginCompany()">Login</button>
-    `;
+    loginPopupMode = "company";
+    document.getElementById("loginStep1").style.display = "none";
+    document.getElementById("loginStep2").style.display = "block";
+    document.getElementById("loginStep2Title").textContent = "Company Login";
+    document.getElementById("loginEmailInput").placeholder = "name@company.com";
+    document.getElementById("loginEmailInput").value = "";
+    resetOtpStep();
+    var input = document.getElementById("loginEmailInput");
+    input.onkeydown = function (e) { if (e.key === "Enter") { e.preventDefault(); doSendOtp(); } };
+    input.focus();
+}
+
+async function doSendOtp() {
+    var email = (document.getElementById("loginEmailInput").value || "").trim();
+    if (!email || !email.includes("@")) {
+        alert(loginPopupMode === "company" ? "Enter valid company email" : "Enter valid email");
+        return;
+    }
+    var btn = document.getElementById("loginEmailBtn");
+    btn.disabled = true;
+    btn.textContent = "Sending...";
+    try {
+        var res = await fetch(API_BASE + "/auth/send-otp", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ email: email })
+        });
+        var data = await res.json().catch(function () { return {}; });
+        if (!res.ok) {
+            alert(data.detail || "Failed to send OTP");
+            btn.disabled = false;
+            btn.textContent = "Send OTP";
+            return;
+        }
+        document.getElementById("loginOtpSection").style.display = "block";
+        btn.textContent = "Resend OTP";
+        btn.onclick = doSendOtp;
+        btn.disabled = false;
+        document.getElementById("loginOtpInput").value = "";
+        document.getElementById("loginOtpInput").focus();
+        document.getElementById("loginVerifyOtpBtn").onclick = doVerifyOtp;
+        document.getElementById("loginOtpInput").onkeydown = function (e) {
+            if (e.key === "Enter") { e.preventDefault(); doVerifyOtp(); }
+        };
+    } catch (e) {
+        console.error(e);
+        alert("Failed to send OTP. Check your connection.");
+        btn.disabled = false;
+        btn.textContent = "Send OTP";
+    }
+}
+
+async function doVerifyOtp() {
+    var email = (document.getElementById("loginEmailInput").value || "").trim();
+    var otp = (document.getElementById("loginOtpInput").value || "").trim();
+    if (!email || !email.includes("@")) {
+        alert("Enter valid email first.");
+        return;
+    }
+    if (!otp || otp.length < 4) {
+        alert("Enter the 6-digit OTP from your email.");
+        return;
+    }
+    try {
+        var res = await fetch(API_BASE + "/auth/verify-otp", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ email: email, otp: otp, mode: loginPopupMode || "personal" })
+        });
+        var data = await res.json().catch(function () { return {}; });
+        if (!res.ok) {
+            alert(data.detail || "Invalid or expired OTP");
+            return;
+        }
+        closeLoginPopup();
+        if (loginPopupMode === "personal") {
+            loginMode = "personal";
+            userEmail = email;
+            applyPersonalLoginUI(email);
+        } else {
+            loginMode = "company";
+            userEmail = email;
+            applyCompanyLoginUI(email);
+        }
+        loadSavedProfilePhoto();
+        loadUserData(email);
+    } catch (e) {
+        console.error(e);
+        alert("Verification failed. Check your connection.");
+    }
+}
+
+function googleLoginFromPopup() {
+    closeLoginPopup();
+    googleLogin();
 }
 
 /* ================= LOAD USER DATA ================= */
@@ -188,28 +301,14 @@ async function loadUserData(email) {
 }
 
 
-/* ================= PERSONAL LOGIN ================= */
+/* ================= PERSONAL / COMPANY LOGIN UI ================= */
 
-function loginPersonal() {
-    const email = document.getElementById("personalEmail").value;
-
-    if (!email || !email.includes("@")) {
-        alert("Enter valid email");
-        return;
-    }
-
-    loginMode = "personal";
-    userEmail = email;
-
-    // Show profile
+function applyPersonalLoginUI(email) {
     document.getElementById("loginBtn").style.display = "none";
     document.getElementById("profileBox").style.display = "block";
-
-    const nameEl = document.getElementById("profileName");
+    var nameEl = document.getElementById("profileName");
     nameEl.textContent = email;
     nameEl.title = email;
-
-    // Show document section (personal: Global Documents + list)
     document.getElementById("documentSection").style.display = "block";
     document.getElementById("documentSectionTitle").textContent = "Global Documents";
     document.getElementById("documentUploadWrap").style.display = "block";
@@ -221,41 +320,18 @@ function loginPersonal() {
     document.getElementById("companyDocCountEmployee").style.display = "none";
     document.getElementById("companyDocHintHr").style.display = "none";
     document.getElementById("companyDocHintEmployee").style.display = "none";
-
-    closeLoginPopup();
-    loadSavedProfilePhoto();
-
-    // Load existing chats & documents (and user id)
-    loadUserData(email);
 }
 
-
-/* ================= COMPANY LOGIN ================= */
-
-function loginCompany() {
-    const email = document.getElementById("companyEmail").value;
-
-    if (!email || !email.includes("@")) {
-        alert("Enter valid company email");
-        return;
-    }
-
-    loginMode = "company";
-    userEmail = email;
-
-    // Show profile
+function applyCompanyLoginUI(email) {
     document.getElementById("loginBtn").style.display = "none";
     document.getElementById("profileBox").style.display = "block";
-
-    const nameEl = document.getElementById("profileName");
+    var nameEl = document.getElementById("profileName");
     nameEl.textContent = email;
     nameEl.title = email;
-
-    // Show document section for company: only HR (hr@...) can upload; others can only use chat
     document.getElementById("documentSection").style.display = "block";
     document.getElementById("documentSectionTitle").textContent = "Company Documents";
     document.getElementById("globalDocsBlock").style.display = "none";
-    var isHr = email && email.trim().toLowerCase().startsWith("hr@");
+    var isHr = email && String(email).trim().toLowerCase().startsWith("hr@");
     document.getElementById("documentUploadWrap").style.display = isHr ? "block" : "none";
     document.getElementById("companyDocHintHr").style.display = isHr ? "block" : "none";
     var companyShowCountWrap = document.getElementById("companyShowCountWrap");
@@ -264,15 +340,8 @@ function loginCompany() {
     if (companyDocsBlock) companyDocsBlock.style.display = isHr ? "block" : "none";
     document.getElementById("companyDocCountEmployee").style.display = "none";
     document.getElementById("companyDocHintEmployee").style.display = isHr ? "none" : "block";
-
-    const panel = document.getElementById("chatDocsPanel");
+    var panel = document.getElementById("chatDocsPanel");
     if (panel) panel.style.display = "none";
-
-    closeLoginPopup();
-    loadSavedProfilePhoto();
-
-    // Load existing chats (company mode) and user id
-    loadUserData(email);
 }
 
 function logout() {
@@ -1234,3 +1303,34 @@ async function removeAdminEmail(emailToRemove) {
 document.addEventListener("click", function () {
     closeAllChatMenus();
 });
+
+
+function googleLogin() {
+    window.location.href = API_BASE + "/login/google";
+}
+
+(function checkGoogleLoginCallback() {
+    var params = new URLSearchParams(window.location.search);
+    var email = params.get("email");
+    if (!email) return;
+    userEmail = email;
+    loginMode = "personal";
+    document.getElementById("loginBtn").style.display = "none";
+    document.getElementById("profileBox").style.display = "block";
+    document.getElementById("profileName").textContent = email;
+    document.getElementById("profileName").title = email;
+    document.getElementById("documentSection").style.display = "block";
+    document.getElementById("documentSectionTitle").textContent = "Global Documents";
+    document.getElementById("documentUploadWrap").style.display = "block";
+    document.getElementById("globalDocsBlock").style.display = "block";
+    var companyDocsBlock = document.getElementById("companyDocsBlock");
+    if (companyDocsBlock) companyDocsBlock.style.display = "none";
+    var companyShowCountWrap = document.getElementById("companyShowCountWrap");
+    if (companyShowCountWrap) companyShowCountWrap.style.display = "none";
+    document.getElementById("companyDocCountEmployee").style.display = "none";
+    document.getElementById("companyDocHintHr").style.display = "none";
+    document.getElementById("companyDocHintEmployee").style.display = "none";
+    loadSavedProfilePhoto();
+    loadUserData(email).catch(function (e) { console.error("Error loading user data after Google login", e); });
+    history.replaceState({}, document.title, window.location.pathname || "/");
+})();
