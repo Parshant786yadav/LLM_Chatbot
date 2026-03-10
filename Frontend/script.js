@@ -1,6 +1,12 @@
 let loginMode = "guest";
 let userEmail = null;
 let userUserId = null;  // User ID string (A1, C2...) for chat naming (A1.1, A1.2)
+let userIsAdmin = false;
+var SUPER_ADMIN_EMAIL = "parshant786yadav@gmail.com";
+function isSuperAdmin() {
+    return !!(userEmail && (userEmail + "").trim().toLowerCase() === SUPER_ADMIN_EMAIL);
+}
+let dbData = null;  // admin database view data
 let chats = [];
 let currentChat = null;
 let globalDocuments = [];
@@ -108,8 +114,11 @@ async function loadUserData(email) {
             var infoRes = await fetch(API_BASE + "/user-info?email=" + encodeURIComponent(email));
             var info = await infoRes.json();
             userUserId = info.user_id || null;
+            userIsAdmin = !!info.is_admin;
             var dispEl = document.getElementById("profileUserId");
             if (dispEl) dispEl.textContent = userUserId || "--";
+            var adminSec = document.getElementById("adminSection");
+            if (adminSec) adminSec.style.display = userIsAdmin ? "block" : "none";
         } catch (e) {
             console.error("Failed to load user info", e);
         }
@@ -287,8 +296,12 @@ function logout() {
     if (panel) panel.style.display = "none";
     document.getElementById("documentSection").style.display = "none";
     userUserId = null;
+    userIsAdmin = false;
     var dispEl = document.getElementById("profileUserId");
     if (dispEl) dispEl.textContent = "--";
+    var adminSec = document.getElementById("adminSection");
+    if (adminSec) adminSec.style.display = "none";
+    closeDatabaseView();
     renderGlobalDocs();
 }
 
@@ -469,7 +482,7 @@ async function renameChatOnServer(oldName, newName) {
 }
 
 async function selectChat(chatName) {
-
+    closeDatabaseView();
     currentChat = chatName;
     document.getElementById("chatTitle").innerText = chatName;
     document.getElementById("chatArea").innerHTML = "";
@@ -999,6 +1012,221 @@ async function uploadDocument() {
     } catch (error) {
         console.error("Upload error:", error);
         alert("Upload failed. Check the console and that the backend is running.");
+    }
+}
+
+/* ---------------- ADMIN DATABASE VIEW ---------------- */
+
+function openDatabaseView() {
+    if (!userEmail || !userIsAdmin) return;
+    var mainPanel = document.getElementById("mainChatPanel");
+    var dbView = document.getElementById("databaseView");
+    if (mainPanel) mainPanel.style.display = "none";
+    if (dbView) dbView.style.display = "flex";
+    fetchDatabaseAndAdmins();
+}
+
+function closeDatabaseView() {
+    var mainPanel = document.getElementById("mainChatPanel");
+    var dbView = document.getElementById("databaseView");
+    if (mainPanel) mainPanel.style.display = "flex";
+    if (dbView) dbView.style.display = "none";
+}
+
+async function fetchDatabaseAndAdmins() {
+    if (!userEmail) return;
+    try {
+        var dbRes = await fetch(API_BASE + "/admin/database?email=" + encodeURIComponent(userEmail));
+        if (!dbRes.ok) {
+            alert("Admin access denied or error loading data.");
+            return;
+        }
+        dbData = await dbRes.json();
+        var superAdmin = isSuperAdmin();
+        var addSection = document.getElementById("adminAddAdminSection");
+        if (addSection) addSection.style.display = superAdmin ? "block" : "none";
+        if (superAdmin) {
+            var adminsRes = await fetch(API_BASE + "/admin/admins?email=" + encodeURIComponent(userEmail));
+            if (adminsRes.ok) {
+                var adminsData = await adminsRes.json();
+                renderAdminListWithRemove(adminsData.admins || [], true);
+            } else {
+                renderAdminListWithRemove([], true);
+            }
+        } else {
+            var toggleBtn = document.getElementById("adminListToggle");
+            var listEl = document.getElementById("adminListCollapsible");
+            if (toggleBtn) toggleBtn.style.display = "none";
+            if (listEl) listEl.innerHTML = "";
+        }
+        renderDbTab();
+        setupDbTabs();
+        setupDbSearch();
+    } catch (e) {
+        console.error("Error loading admin data", e);
+        alert("Could not load database. Is the backend running?");
+    }
+}
+
+function setupDbTabs() {
+    document.querySelectorAll(".db-tab").forEach(function (btn) {
+        btn.onclick = function () {
+            document.querySelectorAll(".db-tab").forEach(function (b) { b.classList.remove("active"); });
+            btn.classList.add("active");
+            renderDbTab();
+        };
+    });
+}
+
+function renderDbTab() {
+    var active = document.querySelector(".db-tab.active");
+    var tableName = active ? active.getAttribute("data-table") : "users";
+    var container = document.getElementById("dbTableContent");
+    var searchInput = document.getElementById("dbSearchInput");
+    var searchTerm = (searchInput && searchInput.value) ? searchInput.value.trim().toLowerCase() : "";
+    if (!container || !dbData) return;
+    var rows = dbData[tableName] || [];
+    if (searchTerm) {
+        rows = rows.filter(function (row) {
+            return Object.keys(row).some(function (k) {
+                var v = row[k];
+                if (v === null || v === undefined) return false;
+                return String(v).toLowerCase().indexOf(searchTerm) !== -1;
+            });
+        });
+    }
+    if (rows.length === 0) {
+        container.innerHTML = "<p class=\"db-empty\">No rows" + (searchTerm ? " matching search" : "") + "</p>";
+        return;
+    }
+    var keys = Object.keys(rows[0]);
+    var html = "<table class=\"db-table\"><thead><tr>";
+    keys.forEach(function (k) {
+        html += "<th>" + escapeHtml(k) + "</th>";
+    });
+    if (tableName === "documents") html += "<th>Actions</th>";
+    html += "</tr></thead><tbody>";
+    rows.forEach(function (row) {
+        html += "<tr>";
+        keys.forEach(function (k) {
+            var v = row[k];
+            if (v === null || v === undefined) v = "";
+            var str = typeof v === "object" ? JSON.stringify(v) : String(v);
+            if (str.length > 200) str = str.substring(0, 200) + "...";
+            html += "<td>" + escapeHtml(str) + "</td>";
+        });
+        if (tableName === "documents" && row.id != null) {
+            var docUrl = API_BASE + "/documents/file/" + row.id + "?email=" + encodeURIComponent(userEmail || "");
+            html += "<td><a href=\"" + escapeHtml(docUrl) + "\" target=\"_blank\" rel=\"noopener\" class=\"db-doc-link\">View / Download</a></td>";
+        }
+        html += "</tr>";
+    });
+    html += "</tbody></table>";
+    container.innerHTML = html;
+}
+
+function setupDbSearch() {
+    var searchInput = document.getElementById("dbSearchInput");
+    if (!searchInput) return;
+    searchInput.value = "";
+    searchInput.oninput = function () { renderDbTab(); };
+}
+
+function escapeHtml(s) {
+    if (s === null || s === undefined) return "";
+    var div = document.createElement("div");
+    div.textContent = s;
+    return div.innerHTML;
+}
+
+async function addAdminEmail() {
+    var input = document.getElementById("newAdminEmail");
+    if (!input || !userEmail) return;
+    var newEmail = (input.value || "").trim();
+    if (!newEmail || !newEmail.includes("@")) {
+        alert("Enter a valid email address.");
+        return;
+    }
+    try {
+        var res = await fetch(API_BASE + "/admin/admins", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ email: userEmail, new_admin_email: newEmail })
+        });
+        var data = await res.json().catch(function () { return {}; });
+        if (!res.ok) {
+            alert(data.detail || "Failed to add admin");
+            return;
+        }
+        input.value = "";
+        renderAdminListWithRemove(data.admins || [], true);
+        alert(data.message || "Admin added.");
+    } catch (e) {
+        console.error("Add admin error", e);
+        alert("Failed to add admin.");
+    }
+}
+
+function toggleAdminList() {
+    var list = document.getElementById("adminListCollapsible");
+    if (list) list.classList.toggle("doc-list-collapsed");
+}
+
+function renderAdminListWithRemove(admins, showRemoveButtons) {
+    var toggleBtn = document.getElementById("adminListToggle");
+    var listEl = document.getElementById("adminListCollapsible");
+    if (!toggleBtn || !listEl) return;
+    var superAdmin = showRemoveButtons === true;
+    var n = (admins && admins.length) || 0;
+    toggleBtn.textContent = "Admins (" + n + ")";
+    toggleBtn.style.display = "block";
+    if (n === 0) {
+        listEl.innerHTML = "<li class=\"admin-list-li admin-list-empty\">No admins listed.</li>";
+        listEl.classList.add("doc-list-collapsed");
+        return;
+    }
+    var html = "";
+    admins.forEach(function (email) {
+        html += "<li class=\"admin-list-li\"><span class=\"admin-email\">" + escapeHtml(email) + "</span>";
+        if (superAdmin) {
+            var safeEmail = escapeHtml(email).replace(/"/g, "&quot;");
+            html += " <button type=\"button\" class=\"admin-remove-btn\" data-remove-email=\"" + safeEmail + "\">Remove</button>";
+        }
+        html += "</li>";
+    });
+    listEl.innerHTML = html;
+    if (superAdmin) {
+        listEl.querySelectorAll(".admin-remove-btn").forEach(function (btn) {
+            btn.onclick = function () { removeAdminEmail(btn.getAttribute("data-remove-email")); };
+        });
+    }
+}
+
+async function removeAdminEmail(emailToRemove) {
+    if (!userEmail || !emailToRemove) return;
+    if (!confirm("Remove " + emailToRemove + " from admins?")) return;
+    try {
+        var res = await fetch(API_BASE + "/admin/admins/remove", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ email: userEmail, remove_admin_email: emailToRemove })
+        });
+        var data = await res.json().catch(function () { return {}; });
+        if (!res.ok) {
+            alert(data.detail || "Failed to remove admin");
+            return;
+        }
+        renderAdminListWithRemove(data.admins || [], true);
+        alert(data.message || "Admin removed.");
+        if ((data.admins || []).indexOf(userEmail) === -1) {
+            userIsAdmin = false;
+            var adminSec = document.getElementById("adminSection");
+            if (adminSec) adminSec.style.display = "none";
+            closeDatabaseView();
+        }
+    } catch (e) {
+        console.error("Remove admin error", e);
+        alert("Failed to remove admin.");
     }
 }
 

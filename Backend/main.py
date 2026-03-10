@@ -38,7 +38,7 @@ try:
 except ImportError:
     _IMAGE_OCR_AVAILABLE = False
     np = None
-from models import Document, DocumentChunk, Company
+from models import Document, DocumentChunk, Company, Admin
 import json
 from rag import cosine_similarity
 
@@ -103,6 +103,13 @@ def _run_db_migrations():
                         conn.execute(text("ALTER TABLE companies ADD COLUMN show_doc_count_to_employees INTEGER DEFAULT 0"))
                 except Exception:
                     pass
+                # Admins table (for admin dashboard / database view)
+                conn.execute(text(
+                    "CREATE TABLE IF NOT EXISTS admins (id INTEGER PRIMARY KEY, email VARCHAR UNIQUE)"
+                ))
+                conn.execute(text(
+                    "INSERT OR IGNORE INTO admins (email) VALUES ('parshant786yadav@gmail.com')"
+                ))
             migration_engine.dispose()
             return
         except OperationalError as e:
@@ -168,6 +175,16 @@ class CompanySettingsUpdate(BaseModel):
     show_doc_count_to_employees: bool
 
 
+class AddAdminRequest(BaseModel):
+    email: str  # current admin (caller)
+    new_admin_email: str  # email to add as admin
+
+
+class RemoveAdminRequest(BaseModel):
+    email: str  # current admin (caller)
+    remove_admin_email: str  # email to remove from admins
+
+
 def _extract_domain(email: str) -> Optional[str]:
     """Extract domain from email (e.g. hr@company.com -> company.com). Returns None if no @."""
     if not email or "@" not in email:
@@ -178,6 +195,21 @@ def _extract_domain(email: str) -> Optional[str]:
 def _is_hr_email(email: str) -> bool:
     """True if email is HR (hr@companyname) – only HR can upload company documents."""
     return bool(email and str(email).strip().lower().startswith("hr@"))
+
+
+SUPER_ADMIN_EMAIL = "parshant786yadav@gmail.com"
+
+
+def _is_admin(db, email: str) -> bool:
+    """True if email is in admins table (can see Database)."""
+    if not email or not str(email).strip():
+        return False
+    return db.query(Admin).filter(Admin.email == email.strip().lower()).first() is not None
+
+
+def _is_super_admin(email: str) -> bool:
+    """True if email is the super admin (only one who can add/remove admins)."""
+    return (email or "").strip().lower() == SUPER_ADMIN_EMAIL
 
 
 def _get_or_create_company(db, domain: str):
@@ -671,15 +703,97 @@ def rename_chat(body: RenameChatRequest):
 
 @app.get("/user-info")
 def get_user_info(email: str = ""):
-    """Get user's user_id (A1, C2, etc.) and email for profile."""
+    """Get user's user_id (A1, C2, etc.), email, and is_admin for profile."""
     if not email:
-        return {"email": "", "user_id": None}
+        return {"email": "", "user_id": None, "is_admin": False}
     db = SessionLocal()
     try:
         user = db.query(User).filter(User.email == email).first()
+        is_admin = _is_admin(db, email)
         if not user:
-            return {"email": email, "user_id": None}
-        return {"email": user.email, "user_id": user.display_id}
+            return {"email": email, "user_id": None, "is_admin": is_admin}
+        return {"email": user.email, "user_id": user.display_id, "is_admin": is_admin}
+    finally:
+        db.close()
+
+
+def _row_to_dict(row, keys):
+    return {k: getattr(row, k, None) for k in keys}
+
+
+@app.get("/admin/database")
+def get_admin_database(email: str = ""):
+    """Return all DB data (users, chats, messages, documents, companies, document_chunks). Admin only."""
+    db = SessionLocal()
+    try:
+        if not _is_admin(db, email):
+            raise HTTPException(status_code=403, detail="Admin only")
+        users = [_row_to_dict(u, ["id", "email", "display_id", "user_type", "company_id"]) for u in db.query(User).all()]
+        chats = [_row_to_dict(c, ["id", "name", "user_id", "display_id"]) for c in db.query(Chat).all()]
+        messages = [_row_to_dict(m, ["id", "role", "content", "chat_id", "display_id"]) for m in db.query(Message).all()]
+        documents = [_row_to_dict(d, ["id", "name", "file_path", "user_id", "company_id", "chat_id", "display_id"]) for d in db.query(Document).all()]
+        chunks = [_row_to_dict(c, ["id", "document_id", "content"]) for c in db.query(DocumentChunk).all()]
+        return {
+            "users": users,
+            "chats": chats,
+            "messages": messages,
+            "documents": documents,
+            "document_chunks": chunks,
+        }
+    finally:
+        db.close()
+
+
+@app.get("/admin/admins")
+def get_admin_list(email: str = ""):
+    """List all admin emails. Only super admin (parshant786yadav@gmail.com) can see the list."""
+    db = SessionLocal()
+    try:
+        if not _is_super_admin(email):
+            raise HTTPException(status_code=403, detail="Only super admin can view admin list")
+        admins = [a.email for a in db.query(Admin).all()]
+        return {"admins": admins}
+    finally:
+        db.close()
+
+
+@app.post("/admin/admins")
+def add_admin(body: AddAdminRequest):
+    """Add an email as admin. Only super admin (parshant786yadav@gmail.com) can add."""
+    db = SessionLocal()
+    try:
+        if not _is_super_admin(body.email):
+            raise HTTPException(status_code=403, detail="Only the super admin can add admins")
+        email_to_add = (body.new_admin_email or "").strip().lower()
+        if not email_to_add or "@" not in email_to_add:
+            raise HTTPException(status_code=400, detail="Valid email required")
+        existing = db.query(Admin).filter(Admin.email == email_to_add).first()
+        if existing:
+            return {"message": "Already an admin", "admins": [a.email for a in db.query(Admin).all()]}
+        admin = Admin(email=email_to_add)
+        db.add(admin)
+        db.commit()
+        return {"message": "Admin added", "admins": [a.email for a in db.query(Admin).all()]}
+    finally:
+        db.close()
+
+
+@app.post("/admin/admins/remove")
+def remove_admin(body: RemoveAdminRequest):
+    """Remove an email from admins. Only super admin (parshant786yadav@gmail.com) can remove."""
+    db = SessionLocal()
+    try:
+        if not _is_super_admin(body.email):
+            raise HTTPException(status_code=403, detail="Only the super admin can remove admins")
+        email_to_remove = (body.remove_admin_email or "").strip().lower()
+        if not email_to_remove:
+            raise HTTPException(status_code=400, detail="Email required")
+        existing = db.query(Admin).filter(Admin.email == email_to_remove).first()
+        if not existing:
+            return {"message": "Not an admin", "admins": [a.email for a in db.query(Admin).all()]}
+        db.delete(existing)
+        db.commit()
+        return {"message": "Admin removed", "admins": [a.email for a in db.query(Admin).all()]}
     finally:
         db.close()
 
@@ -690,6 +804,18 @@ def get_document_file(document_id: int, email: str):
     db = SessionLocal()
 
     try:
+        # Admin can view/download any document
+        if _is_admin(db, email):
+            doc = db.query(Document).filter(Document.id == document_id).first()
+            if not doc or not doc.file_path or not os.path.isfile(doc.file_path):
+                raise HTTPException(status_code=404, detail="Document not found")
+            media_type = _media_type_for_path(doc.file_path)
+            return FileResponse(
+                doc.file_path,
+                media_type=media_type,
+                filename=doc.name,
+            )
+
         user = db.query(User).filter(User.email == email).first()
         if not user:
             raise HTTPException(status_code=404, detail="User not found")

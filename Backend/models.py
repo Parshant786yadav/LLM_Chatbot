@@ -93,3 +93,10 @@ class Company(Base):
 
     users = relationship("User", back_populates="company")
     documents = relationship("Document", back_populates="company")
+
+
+class Admin(Base):
+    __tablename__ = "admins"
+
+    id = Column(Integer, primary_key=True, index=True)
+    email = Column(String, unique=True, index=True)

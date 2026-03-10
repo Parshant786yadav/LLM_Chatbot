@@ -48,6 +48,12 @@
             <ul id="chatList"></ul>
         </div>
 
+        <!-- Admin: Database (only for admin users) -->
+        <div id="adminSection" class="section" style="display: none;">
+            <h4>Admin</h4>
+            <button type="button" id="adminDatabaseBtn" class="admin-db-btn" onclick="openDatabaseView()">Database</button>
+        </div>
+
         <!-- Documents: Global (personal) or Company (company login) -->
         <div id="documentSection">
             <div class="section documents-block">
@@ -77,6 +83,7 @@
 
     <!-- MAIN AREA -->
     <div class="main">
+        <div id="mainChatPanel">
         <div class="chat-header">
             <h3 id="chatTitle">Select or Create Chat</h3>
             <!-- Chat Documents: upper right, only in personal mode when a chat is selected -->
@@ -93,6 +100,36 @@
         <div class="input-box">
             <input id="messageInput" placeholder="Ask your AI...">
             <button onclick="sendMessage()">Send</button>
+        </div>
+        </div>
+
+        <div id="databaseView" class="database-view" style="display: none;">
+            <div class="database-view-header">
+                <h3>Database</h3>
+                <button type="button" class="back-to-chat-btn" onclick="closeDatabaseView()">Back to Chat</button>
+            </div>
+            <div id="adminAddAdminSection" class="admin-add-admin">
+                <h4>Add admin</h4>
+                <input type="email" id="newAdminEmail" placeholder="Email to add as admin">
+                <button type="button" onclick="addAdminEmail()">Add admin</button>
+                <div id="adminListWithRemove" class="admin-list-with-remove">
+                    <button type="button" id="adminListToggle" class="admin-list-toggle" onclick="toggleAdminList()">Admins (0)</button>
+                    <ul id="adminListCollapsible" class="admin-list-ul admin-list-dropdown doc-list doc-list-collapsed"></ul>
+                </div>
+            </div>
+            <div class="database-tables">
+                <div class="db-search-wrap">
+                    <input type="text" id="dbSearchInput" class="db-search-input" placeholder="Search in this table...">
+                </div>
+                <div class="db-tabs">
+                    <button type="button" class="db-tab active" data-table="users">Users</button>
+                    <button type="button" class="db-tab" data-table="chats">Chats</button>
+                    <button type="button" class="db-tab" data-table="messages">Messages</button>
+                    <button type="button" class="db-tab" data-table="documents">Documents</button>
+                    <button type="button" class="db-tab" data-table="document_chunks">Document chunks</button>
+                </div>
+                <div id="dbTableContent" class="db-table-content"></div>
+            </div>
         </div>
     </div>
 
