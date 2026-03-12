@@ -1254,3 +1254,6 @@ async def auth_google(request: Request):
 # Serve frontend static files at / (index.html, script.js, style.css). API routes above take precedence.
 if os.path.isdir(FRONTEND_DIR):
     app.mount("/", StaticFiles(directory=FRONTEND_DIR, html=True), name="frontend")
+
+
+
