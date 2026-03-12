@@ -360,10 +360,11 @@ function logout() {
 
     document.getElementById("chatList").innerHTML = "";
     document.getElementById("chatArea").innerHTML = "";
-    document.getElementById("chatTitle").innerText = "Select or Create Chat";
+    document.getElementById("chatTitle").innerText = "DocuMind";
     var panel = document.getElementById("chatDocsPanel");
     if (panel) panel.style.display = "none";
     document.getElementById("documentSection").style.display = "none";
+    showStartView();
     userUserId = null;
     userIsAdmin = false;
     var dispEl = document.getElementById("profileUserId");
@@ -580,17 +581,24 @@ async function selectChat(chatName) {
 
     try {
         const res = await fetch(
-            `http://localhost:8000/messages/${userEmail}/${chatName}`
+            API_BASE + "/messages/" + encodeURIComponent(userEmail) + "/" + encodeURIComponent(chatName)
         );
 
         const data = await res.json();
+        var messages = data.messages || [];
 
-        (data.messages || []).forEach(msg => {
+        messages.forEach(msg => {
             addMessage(msg.content, msg.role);
         });
 
+        if (messages.length > 0) {
+            showChatView();
+        } else {
+            showStartView();
+        }
     } catch (error) {
         console.error("Error loading messages:", error);
+        showStartView();
     }
 }
 
@@ -866,6 +874,16 @@ async function removeChatDoc(docId) {
 
 /* ---------------- SEND MESSAGE ---------------- */
 
+function showStartView() {
+    var container = document.getElementById("chatContainer");
+    if (container) container.classList.remove("has-messages");
+}
+
+function showChatView() {
+    var container = document.getElementById("chatContainer");
+    if (container) container.classList.add("has-messages");
+}
+
 (function setupEnterToSend() {
     var input = document.getElementById("messageInput");
     if (input) {
@@ -879,8 +897,8 @@ async function removeChatDoc(docId) {
 })();
 
 async function sendMessage() {
-
-    const input = document.getElementById("messageInput");
+    var input = document.getElementById("messageInput");
+    if (!input) return;
     const message = input.value;
 
     if (!message || !message.trim()) return;
@@ -907,6 +925,13 @@ async function sendMessage() {
 
     addMessage(message, "user");
     input.value = "";
+    if (!document.getElementById("chatContainer").classList.contains("has-messages")) {
+        showChatView();
+        requestAnimationFrame(function () {
+            var area = document.getElementById("chatArea");
+            if (area) area.scrollTop = area.scrollHeight;
+        });
+    }
     addTypingIndicator();
 
     fetch(API_BASE + "/chat", {

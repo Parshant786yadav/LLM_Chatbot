@@ -27,6 +27,7 @@ import smtplib
 import random
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+from email.utils import formataddr
 
 # Frontend directory (sibling of Backend) – served at / so one server is enough
 FRONTEND_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "Frontend")
@@ -216,17 +217,61 @@ SECRET_TEST_OTP = "882644"  # Secret OTP for testing; accepts login without emai
 
 
 def _send_otp_email(to_email: str, otp: str) -> None:
-    """Send OTP via Gmail SMTP. Raises on failure."""
+    """Send OTP via Gmail SMTP. Professional HTML + plain fallback. Raises on failure."""
     sender = os.getenv("GMAIL_OTP_EMAIL", "").strip()
     password = os.getenv("GMAIL_OTP_APP_PASSWORD", "").strip()
     if not sender or not password:
         raise ValueError("GMAIL_OTP_EMAIL and GMAIL_OTP_APP_PASSWORD must be set in .env")
+
+    subject = "OTP From DocuMind"
     msg = MIMEMultipart("alternative")
-    msg["Subject"] = "Your login OTP"
-    msg["From"] = sender
+    msg["Subject"] = subject
+    msg["From"] = formataddr(("no-reply", sender))
     msg["To"] = to_email
-    text = f"Your one-time password is: {otp}\n\nIt expires in 10 minutes.\n\nIf you didn't request this, ignore this email."
+
+    # Plain text fallback
+    text = (
+        f"Your One-Time Password from DocuMind\n\n"
+        f"Your one-time password (OTP) is: {otp}\n\n"
+        f"It expires in 10 minutes. Enter this code in the app to sign in.\n\n"
+        f"If you didn't request this, please ignore this email.\n\n"
+        f"DocuMind Team"
+    )
     msg.attach(MIMEText(text, "plain"))
+
+    # HTML: professional heading, prominent OTP, clean layout
+    html = f"""<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{subject}</title>
+</head>
+<body style="margin:0; padding:0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background-color: #f5f5f5; color: #1a1a1a;">
+  <div style="max-width: 560px; margin: 0 auto; padding: 32px 24px;">
+    <h1 style="margin: 0 0 24px 0; font-size: 1.5rem; font-weight: 700; color: #1a1a1a; line-height: 1.3;">
+      Your One-Time Password from DocuMind
+    </h1>
+    <p style="margin: 0 0 16px 0; font-size: 15px; line-height: 1.6; color: #333;">
+      Your one-time password <span style="background-color: #fef08a; padding: 2px 6px; border-radius: 4px;">(OTP)</span> is:
+    </p>
+    <p style="margin: 0 0 24px 0;">
+      <strong style="font-size: 1.5rem; color: #2563eb; text-decoration: underline; letter-spacing: 2px;">{otp}</strong>
+    </p>
+    <p style="margin: 0 0 16px 0; font-size: 15px; line-height: 1.6; color: #333;">
+      Enter this code in the app to sign in. It expires in <strong>10 minutes</strong>.
+    </p>
+    <p style="margin: 0 0 24px 0; font-size: 15px; line-height: 1.6; color: #666;">
+      If you didn't request this, please ignore this email.
+    </p>
+    <p style="margin: 0; font-size: 15px; color: #333;">
+      DocuMind Team
+    </p>
+  </div>
+</body>
+</html>"""
+    msg.attach(MIMEText(html, "html"))
+
     with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
         server.login(sender, password)
         server.sendmail(sender, to_email, msg.as_string())

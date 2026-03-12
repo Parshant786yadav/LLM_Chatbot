@@ -2,7 +2,7 @@
 <html>
 <head>
     <meta charset="UTF-8">
-    <title>Enterprise AI Assistant</title>
+    <title>DocuMind</title>
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -40,7 +40,7 @@
 
         <hr>
 
-        <h3>AI Workspace</h3>
+        <h3>DocuMind</h3>
         <button onclick="createChat()">+ New Chat</button>
 
         <div class="section">
@@ -84,22 +84,27 @@
     <!-- MAIN AREA -->
     <div class="main">
         <div id="mainChatPanel">
-        <div class="chat-header">
-            <h3 id="chatTitle">Select or Create Chat</h3>
-            <!-- Chat Documents: upper right, only in personal mode when a chat is selected -->
-            <div id="chatDocsPanel" class="chat-docs-panel" style="display: none;">
-                <h4 class="chat-docs-panel-title">Chat Documents</h4>
-                <input type="file" id="chatUpload" accept=".pdf,application/pdf,image/*" onchange="uploadChatDoc()" class="chat-docs-upload">
-                <button type="button" class="documents-toggle chat-docs-toggle" id="chatDocsToggle" onclick="toggleChatDocsList()">Documents uploaded 0</button>
-                <ul id="chatDocs" class="chat-docs-list doc-list doc-list-collapsed"></ul>
+        <div id="chatContainer" class="chat-container">
+            <div class="chat-container-inner">
+                <div class="start-branding">
+                    <h1 class="start-branding-title">DocuMind</h1>
+                    <p class="start-branding-tagline">Ask DocuMind anything</p>
+                </div>
+                <div class="chat-header" id="chatHeader">
+                    <h3 id="chatTitle">DocuMind</h3>
+                    <div id="chatDocsPanel" class="chat-docs-panel" style="display: none;">
+                        <h4 class="chat-docs-panel-title">Chat Documents</h4>
+                        <input type="file" id="chatUpload" accept=".pdf,application/pdf,image/*" onchange="uploadChatDoc()" class="chat-docs-upload">
+                        <button type="button" class="documents-toggle chat-docs-toggle" id="chatDocsToggle" onclick="toggleChatDocsList()">Documents uploaded 0</button>
+                        <ul id="chatDocs" class="chat-docs-list doc-list doc-list-collapsed"></ul>
+                    </div>
+                </div>
+                <div id="chatArea" class="chat-area"></div>
+                <div class="input-box">
+                    <input id="messageInput" placeholder="Ask DocuMind anything...">
+                    <button type="button" onclick="sendMessage()">Send</button>
+                </div>
             </div>
-        </div>
-
-        <div id="chatArea" class="chat-area"></div>
-
-        <div class="input-box">
-            <input id="messageInput" placeholder="Ask your AI...">
-            <button onclick="sendMessage()">Send</button>
         </div>
         </div>
 
