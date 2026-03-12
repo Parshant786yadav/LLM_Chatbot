@@ -433,12 +433,16 @@ body {
     line-height: 1.4;
 }
 
+.start-branding {
+    border-bottom: none;
+}
+
 .chat-container.has-messages .start-branding {
     display: none;
 }
 
-/* Header: hidden in start, visible in chat */
-.chat-header {
+/* Header: hidden in start (no second DocuMind, no line), visible in chat */
+.chat-container .chat-header {
     display: none;
     padding: 14px 20px;
     background: #fafafa;
