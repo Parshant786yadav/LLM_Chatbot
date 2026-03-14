@@ -48,6 +48,23 @@ function closeProfileDropdown() {
     if (trigger) trigger.setAttribute("aria-expanded", "false");
 }
 
+/* ---------------- MOBILE SIDEBAR ---------------- */
+
+function toggleSidebar() {
+    var layout = document.getElementById("layout");
+    if (layout) layout.classList.toggle("sidebar-open");
+}
+
+function closeSidebar() {
+    var layout = document.getElementById("layout");
+    if (layout) layout.classList.remove("sidebar-open");
+}
+
+(function setupSidebarOverlay() {
+    var overlay = document.getElementById("sidebarOverlay");
+    if (overlay) overlay.addEventListener("click", closeSidebar);
+})();
+
 function changePhoto() {
     var input = document.getElementById("photoUpload");
     if (!input || !input.files || !input.files.length) return;
@@ -320,6 +337,9 @@ function applyPersonalLoginUI(email) {
     document.getElementById("companyDocCountEmployee").style.display = "none";
     document.getElementById("companyDocHintHr").style.display = "none";
     document.getElementById("companyDocHintEmployee").style.display = "none";
+    var panel = document.getElementById("chatDocsPanel");
+    if (panel) panel.style.display = "block";
+    renderChatDocs();
 }
 
 function applyCompanyLoginUI(email) {
@@ -362,8 +382,19 @@ function logout() {
     document.getElementById("chatArea").innerHTML = "";
     document.getElementById("chatTitle").innerText = "DocuMind";
     var panel = document.getElementById("chatDocsPanel");
-    if (panel) panel.style.display = "none";
-    document.getElementById("documentSection").style.display = "none";
+    if (panel) panel.style.display = "block";
+    /* Keep sidebar same as after login: show Global Documents section */
+    document.getElementById("documentSection").style.display = "block";
+    document.getElementById("documentSectionTitle").textContent = "Global Documents";
+    document.getElementById("documentUploadWrap").style.display = "block";
+    document.getElementById("globalDocsBlock").style.display = "block";
+    var companyDocsBlock = document.getElementById("companyDocsBlock");
+    if (companyDocsBlock) companyDocsBlock.style.display = "none";
+    var companyShowCountWrap = document.getElementById("companyShowCountWrap");
+    if (companyShowCountWrap) companyShowCountWrap.style.display = "none";
+    document.getElementById("companyDocCountEmployee").style.display = "none";
+    document.getElementById("companyDocHintHr").style.display = "none";
+    document.getElementById("companyDocHintEmployee").style.display = "none";
     showStartView();
     userUserId = null;
     userIsAdmin = false;
@@ -552,16 +583,17 @@ async function renameChatOnServer(oldName, newName) {
 }
 
 async function selectChat(chatName) {
+    closeSidebar();
     closeDatabaseView();
     currentChat = chatName;
     document.getElementById("chatTitle").innerText = chatName;
     document.getElementById("chatArea").innerHTML = "";
     renderChats();
 
-    // Show chat documents panel and load docs when in personal mode
+    // Show chat documents panel (header right) for guest and personal; hide for company
     var panel = document.getElementById("chatDocsPanel");
+    if (panel) panel.style.display = (loginMode === "company") ? "none" : "block";
     if (loginMode === "personal" && panel) {
-        panel.style.display = "block";
         // If we don't have this chat's docs yet (e.g. new chat), fetch from API
         if (!chatDocuments[chatName]) {
             try {
@@ -575,8 +607,6 @@ async function selectChat(chatName) {
             }
         }
         renderChatDocs();
-    } else if (panel) {
-        panel.style.display = "none";
     }
 
     try {
@@ -822,7 +852,8 @@ function renderChatDocs() {
     if (!toggleBtn || !list) return;
     var docs = currentChat ? chatDocuments[currentChat] || [] : [];
     var n = docs.length;
-    toggleBtn.textContent = "Documents uploaded " + n;
+    toggleBtn.textContent = (window.innerWidth <= 768) ? (n + " docs") : ("Documents uploaded " + n);
+    toggleBtn.setAttribute("data-count", n);
     list.innerHTML = "";
     list.classList.add("doc-list-collapsed");
     if (!currentChat) return;
@@ -1355,7 +1386,47 @@ function googleLogin() {
     document.getElementById("companyDocCountEmployee").style.display = "none";
     document.getElementById("companyDocHintHr").style.display = "none";
     document.getElementById("companyDocHintEmployee").style.display = "none";
+    var panel = document.getElementById("chatDocsPanel");
+    if (panel) panel.style.display = "block";
+    renderChatDocs();
     loadSavedProfilePhoto();
     loadUserData(email).catch(function (e) { console.error("Error loading user data after Google login", e); });
     history.replaceState({}, document.title, window.location.pathname || "/");
+})();
+
+/* Mobile: auto-focus chat input so keyboard opens when user opens the site */
+(function setupMobileAutoFocus() {
+    function tryFocusInput() {
+        if (!window.matchMedia || !window.matchMedia("(max-width: 768px)").matches) return;
+        var input = document.getElementById("messageInput");
+        if (input) {
+            setTimeout(function () { input.focus(); }, 400);
+        }
+    }
+    if (document.readyState === "loading") {
+        document.addEventListener("DOMContentLoaded", tryFocusInput);
+    } else {
+        tryFocusInput();
+    }
+})();
+
+/* Update Chat Documents toggle text on resize (short on mobile, full on desktop) */
+(function setupChatDocsToggleResize() {
+    function updateChatDocsToggleText() {
+        var toggleBtn = document.getElementById("chatDocsToggle");
+        if (!toggleBtn) return;
+        var n = toggleBtn.getAttribute("data-count");
+        if (n === null) {
+            var m = toggleBtn.textContent.match(/Documents uploaded (\d+)/);
+            n = m ? m[1] : "0";
+            toggleBtn.setAttribute("data-count", n);
+        }
+        toggleBtn.textContent = (window.innerWidth <= 768) ? (n + " docs") : ("Documents uploaded " + n);
+    }
+    window.addEventListener("resize", updateChatDocsToggleText);
+    if (document.readyState === "loading") {
+        document.addEventListener("DOMContentLoaded", updateChatDocsToggleText);
+    } else {
+        updateChatDocsToggleText();
+    }
 })();

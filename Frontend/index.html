@@ -2,21 +2,26 @@
 <html>
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>DocuMind</title>
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
 
-<div class="layout">
+<div class="layout" id="layout">
+
+    <!-- Mobile: backdrop to close sidebar when clicking outside -->
+    <div class="sidebar-overlay" id="sidebarOverlay" aria-hidden="true"></div>
 
     <!-- SIDEBAR -->
-    <div class="sidebar">
+    <div class="sidebar" id="sidebar">
 
         <!-- PROFILE SECTION -->
         <div id="authSection" class="profile-section">
-            <button id="loginBtn" class="login-btn" onclick="openLoginPopup()">Login</button>
-
-            <div id="profileBox" class="profile-box" style="display: none;">
+            <div class="sidebar-mobile-top">
+                <div class="sidebar-mobile-auth">
+                    <button id="loginBtn" class="login-btn" onclick="openLoginPopup()">Login</button>
+                    <div id="profileBox" class="profile-box" style="display: none;">
                 <button type="button" class="profile-trigger" id="profileTrigger" onclick="toggleProfileDropdown(event)" aria-haspopup="true" aria-expanded="false">
                     <img id="profilePhoto" src="https://api.dicebear.com/7.x/avataaars/svg?seed=default" alt="Profile" class="profile-img">
                     <div class="profile-info">
@@ -35,6 +40,9 @@
                     </label>
                     <button type="button" class="profile-dropdown-item profile-logout" onclick="logout()" role="menuitem">Log out</button>
                 </div>
+            </div>
+                </div>
+                <button type="button" class="sidebar-close" id="sidebarClose" onclick="closeSidebar()" aria-label="Close menu">×</button>
             </div>
         </div>
 
@@ -86,24 +94,33 @@
         <div id="mainChatPanel">
         <div id="chatContainer" class="chat-container">
             <div class="chat-container-inner">
-                <div class="start-branding">
-                    <h1 class="start-branding-title">DocuMind</h1>
-                    <p class="start-branding-tagline">Ask DocuMind anything</p>
-                </div>
                 <div class="chat-header" id="chatHeader">
+                    <button type="button" class="sidebar-toggle" id="sidebarToggle" onclick="toggleSidebar()" aria-label="Open menu">
+                        <span class="sidebar-toggle-icon">
+                            <span class="sidebar-toggle-line"></span>
+                            <span class="sidebar-toggle-line"></span>
+                            <span class="sidebar-toggle-dot"></span>
+                        </span>
+                    </button>
                     <h3 id="chatTitle">DocuMind</h3>
-                    <div id="chatDocsPanel" class="chat-docs-panel" style="display: none;">
-                        <h4 class="chat-docs-panel-title">Chat Documents</h4>
+                    <div id="chatDocsPanel" class="chat-docs-panel">
+                        <h4 class="chat-docs-panel-title">Document upload</h4>
                         <input type="file" id="chatUpload" accept=".pdf,application/pdf,image/*" onchange="uploadChatDoc()" class="chat-docs-upload">
                         <button type="button" class="documents-toggle chat-docs-toggle" id="chatDocsToggle" onclick="toggleChatDocsList()">Documents uploaded 0</button>
                         <ul id="chatDocs" class="chat-docs-list doc-list doc-list-collapsed"></ul>
                     </div>
                 </div>
+                <div class="start-branding">
+                    <h1 class="start-branding-title">DocuMind</h1>
+                    <p class="start-branding-tagline">Ask DocuMind </p>
+                </div>
                 <div id="chatArea" class="chat-area"></div>
+                <p class="start-prompt" aria-hidden="true">Ask anything about your Documents</p>
                 <div class="input-box">
-                    <input id="messageInput" placeholder="Ask DocuMind anything...">
+                    <input id="messageInput" placeholder="Ask DocuMind ...">
                     <button type="button" onclick="sendMessage()">Send</button>
                 </div>
+                <div class="start-spacer" aria-hidden="true"></div>
             </div>
         </div>
         </div>
