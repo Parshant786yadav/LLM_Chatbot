@@ -447,7 +447,7 @@ function clearGuestSession() {
     } catch (e) {}
 }
 
-/** If user had a guest chat, claim it to their account and refresh. Call after successful login. Returns true if a chat was claimed. */
+/** If user had a guest chat, claim it so all messages get the user's display_id and chat is renamed to "Chat 1". No message reload to avoid refresh. Call after successful login. Returns true if a chat was claimed. */
 async function claimGuestChatIfAny(email) {
     try {
         var guestChatId = sessionStorage.getItem(GUEST_CHAT_STORAGE_KEY);
@@ -458,16 +458,44 @@ async function claimGuestChatIfAny(email) {
             body: JSON.stringify({ guest_chat_name: guestChatId, email: email })
         });
         if (!res.ok) return false;
+        var data = await res.json().catch(function () { return {}; });
         clearGuestSession();
+        var newName = (data.name && data.name.trim()) ? data.name.trim() : guestChatId;
+        currentChat = newName;
+        document.getElementById("chatTitle").innerText = newName;
         await loadUserData(email);
-        currentChat = guestChatId;
-        document.getElementById("chatTitle").innerText = currentChat;
         renderChats();
         return true;
     } catch (e) {
         console.error("Claim guest chat error", e);
         clearGuestSession();
         return false;
+    }
+}
+
+/** Load messages for currentChat from server and re-render. Used after claiming guest chat so messages show under user. */
+async function loadMessagesForCurrentChat() {
+    if (!currentChat || !userEmail) return;
+    var chatArea = document.getElementById("chatArea");
+    if (!chatArea) return;
+    chatArea.innerHTML = "";
+    try {
+        var res = await fetch(
+            API_BASE + "/messages/" + encodeURIComponent(userEmail) + "/" + encodeURIComponent(currentChat)
+        );
+        var data = await res.json();
+        var messages = data.messages || [];
+        messages.forEach(function (msg) {
+            addMessage(msg.content, msg.role);
+        });
+        if (messages.length > 0) {
+            showChatView();
+        } else {
+            showStartView();
+        }
+    } catch (e) {
+        console.error("Error loading messages for current chat", e);
+        showStartView();
     }
 }
 
@@ -532,7 +560,7 @@ function renderChats() {
         nameWrap.className = "chat-name-wrap";
         const nameSpan = document.createElement("span");
         nameSpan.className = "chat-name-text";
-        nameSpan.textContent = chat;
+        nameSpan.textContent = (chat && String(chat).indexOf("guest-") === 0) ? "Guest chat" : chat;
         nameWrap.appendChild(nameSpan);
 
         const actions = document.createElement("div");
@@ -709,6 +737,10 @@ function uploadGlobal() {
 }
 
 async function uploadChatDoc() {
+    if (!userEmail) {
+        alert("Please login to upload documents");
+        return;
+    }
     if (loginMode !== "personal") return;
     if (!currentChat) {
         alert("Select a chat first");
@@ -1187,7 +1219,7 @@ async function uploadDocument() {
     }
 
     if (!userEmail) {
-        alert("Please sign in first");
+        alert("Please login to upload documents");
         return;
     }
 
@@ -1470,6 +1502,14 @@ function googleLogin() {
 
 (function checkGoogleLoginCallback() {
     var params = new URLSearchParams(window.location.search);
+    var error = params.get("error");
+    var message = params.get("message");
+    if (error === "oauth" && message) {
+        try { message = decodeURIComponent(message); } catch (e) {}
+        alert(message);
+        history.replaceState({}, document.title, window.location.pathname || "/");
+        return;
+    }
     var email = params.get("email");
     if (!email) return;
     userEmail = email;

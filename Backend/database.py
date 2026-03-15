@@ -1,22 +1,19 @@
-# database.py
+# database.py – Supabase client (replaces SQLite/SQLAlchemy)
 
 import os
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker, declarative_base
+from supabase import create_client
 
-# Absolute path so startup and request handlers use the same DB file
-_db_dir = os.path.dirname(os.path.abspath(__file__))
-DATABASE_URL = "sqlite:///" + os.path.join(_db_dir, "chatbot.db").replace("\\", "/")
+_client = None
 
-engine = create_engine(
-    DATABASE_URL,
-    connect_args={"check_same_thread": False, "timeout": 20}
-)
 
-SessionLocal = sessionmaker(
-    autocommit=False,
-    autoflush=False,
-    bind=engine
-)
-
-Base = declarative_base()
+def get_supabase():
+    """Return Supabase client. Uses SUPABASE_URL and SUPABASE_KEY from env.
+    For full backend access (bypass RLS), use the service_role key in .env if needed."""
+    global _client
+    if _client is None:
+        url = (os.getenv("SUPABASE_URL") or "").strip()
+        key = (os.getenv("SUPABASE_KEY") or "").strip()
+        if not url or not key:
+            raise RuntimeError("SUPABASE_URL and SUPABASE_KEY must be set in .env")
+        _client = create_client(url, key)
+    return _client
