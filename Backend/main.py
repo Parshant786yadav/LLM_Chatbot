@@ -185,6 +185,11 @@ class CreateChatRequest(BaseModel):
     mode: str  # "personal" or "company" for user display_id when creating user
 
 
+class ClaimChatRequest(BaseModel):
+    guest_chat_name: str  # chat name used for anonymous session (e.g. UUID)
+    email: str  # real user email after login
+
+
 class CompanySettingsUpdate(BaseModel):
     email: str
     show_doc_count_to_employees: bool
@@ -857,6 +862,41 @@ def rename_chat(body: RenameChatRequest):
         chat.name = new_name
         db.commit()
         return {"ok": True, "name": new_name}
+    finally:
+        db.close()
+
+
+@app.post("/chats/claim")
+def claim_guest_chat(body: ClaimChatRequest):
+    """Assign a guest (anonymous) chat to the logged-in user so they keep the history."""
+    db = SessionLocal()
+    try:
+        guest_chat_name = (body.guest_chat_name or "").strip()
+        email = (body.email or "").strip()
+        if not guest_chat_name or not email:
+            raise HTTPException(status_code=400, detail="guest_chat_name and email required")
+        guest_user = db.query(User).filter(User.email == "guest").first()
+        if not guest_user:
+            return {"ok": True, "name": guest_chat_name}
+        real_user = db.query(User).filter(User.email == email).first()
+        if not real_user:
+            raise HTTPException(status_code=404, detail="User not found")
+        chat = (
+            db.query(Chat)
+            .filter(Chat.user_id == guest_user.id, Chat.name == guest_chat_name)
+            .first()
+        )
+        if not chat:
+            return {"ok": True, "name": guest_chat_name}
+        chat.user_id = real_user.id
+        chat.display_id = real_user.display_id
+        # Update all messages in this chat to the real user's display_id so the first 2 (guest) messages are attributed to them
+        db.query(Message).filter(Message.chat_id == chat.id).update(
+            {Message.display_id: real_user.display_id},
+            synchronize_session=False
+        )
+        db.commit()
+        return {"ok": True, "name": guest_chat_name}
     finally:
         db.close()
 

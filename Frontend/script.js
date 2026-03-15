@@ -103,6 +103,7 @@ function loadSavedProfilePhoto() {
 var loginPopupMode = "personal";  // "personal" or "company"
 
 function openLoginPopup() {
+    closeSidebar();
     document.getElementById("loginPopup").style.display = "flex";
     showLoginStep1();
 }
@@ -223,7 +224,8 @@ async function doVerifyOtp() {
             applyCompanyLoginUI(email);
         }
         loadSavedProfilePhoto();
-        loadUserData(email);
+        var claimed = await claimGuestChatIfAny(email);
+        if (!claimed) loadUserData(email);
     } catch (e) {
         console.error(e);
         alert("Verification failed. Check your connection.");
@@ -404,6 +406,69 @@ function logout() {
     if (adminSec) adminSec.style.display = "none";
     closeDatabaseView();
     renderGlobalDocs();
+}
+
+/* ---------------- GUEST CHAT (2 messages without login) ---------------- */
+
+var GUEST_CHAT_STORAGE_KEY = "documind_guest_chat_id";
+var GUEST_COUNT_STORAGE_KEY = "documind_guest_msg_count";
+
+function getOrCreateGuestChatId() {
+    try {
+        var id = sessionStorage.getItem(GUEST_CHAT_STORAGE_KEY);
+        if (id) return id;
+        var uuid = "guest-" + crypto.randomUUID();
+        sessionStorage.setItem(GUEST_CHAT_STORAGE_KEY, uuid);
+        return uuid;
+    } catch (e) {
+        return "guest-" + Date.now() + "-" + Math.random().toString(36).slice(2);
+    }
+}
+
+function getGuestMessageCount() {
+    try {
+        var n = parseInt(sessionStorage.getItem(GUEST_COUNT_STORAGE_KEY), 10);
+        return isNaN(n) ? 0 : n;
+    } catch (e) {
+        return 0;
+    }
+}
+
+function setGuestMessageCount(n) {
+    try {
+        sessionStorage.setItem(GUEST_COUNT_STORAGE_KEY, String(n));
+    } catch (e) {}
+}
+
+function clearGuestSession() {
+    try {
+        sessionStorage.removeItem(GUEST_CHAT_STORAGE_KEY);
+        sessionStorage.removeItem(GUEST_COUNT_STORAGE_KEY);
+    } catch (e) {}
+}
+
+/** If user had a guest chat, claim it to their account and refresh. Call after successful login. Returns true if a chat was claimed. */
+async function claimGuestChatIfAny(email) {
+    try {
+        var guestChatId = sessionStorage.getItem(GUEST_CHAT_STORAGE_KEY);
+        if (!guestChatId) return false;
+        var res = await fetch(API_BASE + "/chats/claim", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ guest_chat_name: guestChatId, email: email })
+        });
+        if (!res.ok) return false;
+        clearGuestSession();
+        await loadUserData(email);
+        currentChat = guestChatId;
+        document.getElementById("chatTitle").innerText = currentChat;
+        renderChats();
+        return true;
+    } catch (e) {
+        console.error("Claim guest chat error", e);
+        clearGuestSession();
+        return false;
+    }
 }
 
 /* ---------------- CHAT LOGIC ---------------- */
@@ -845,15 +910,45 @@ async function toggleCompanyShowCountToEmployees() {
     }
 }
 
+function toggleChatDocsUploadDropdown() {
+    var dropdown = document.getElementById("chatDocsMobileDropdown");
+    var plus = document.getElementById("chatDocsMobilePlus");
+    if (!dropdown || !plus) return;
+    var isOpen = dropdown.classList.toggle("open");
+    plus.setAttribute("aria-expanded", isOpen);
+    if (isOpen) {
+        document.addEventListener("click", closeChatDocsUploadDropdownOnClickOutside);
+    } else {
+        document.removeEventListener("click", closeChatDocsUploadDropdownOnClickOutside);
+    }
+}
+
+function closeChatDocsUploadDropdown() {
+    var dropdown = document.getElementById("chatDocsMobileDropdown");
+    var plus = document.getElementById("chatDocsMobilePlus");
+    if (dropdown) dropdown.classList.remove("open");
+    if (plus) plus.setAttribute("aria-expanded", "false");
+    document.removeEventListener("click", closeChatDocsUploadDropdownOnClickOutside);
+}
+
+function closeChatDocsUploadDropdownOnClickOutside(e) {
+    var panel = document.getElementById("chatDocsPanel");
+    if (panel && !panel.contains(e.target)) {
+        closeChatDocsUploadDropdown();
+    }
+}
+
 function renderChatDocs() {
     if (loginMode !== "personal") return;
     var list = document.getElementById("chatDocs");
     var toggleBtn = document.getElementById("chatDocsToggle");
+    var mobileCount = document.getElementById("chatDocsMobileCount");
     if (!toggleBtn || !list) return;
     var docs = currentChat ? chatDocuments[currentChat] || [] : [];
     var n = docs.length;
     toggleBtn.textContent = (window.innerWidth <= 768) ? (n + " docs") : ("Documents uploaded " + n);
     toggleBtn.setAttribute("data-count", n);
+    if (mobileCount) mobileCount.textContent = n + " docs";
     list.innerHTML = "";
     list.classList.add("doc-list-collapsed");
     if (!currentChat) return;
@@ -936,22 +1031,29 @@ async function sendMessage() {
 
     if (!currentChat) {
         if (!userEmail) {
-            alert("Please sign in first");
-            return;
+            currentChat = getOrCreateGuestChatId();
+            document.getElementById("chatTitle").innerText = "Guest chat";
+        } else {
+            var newName = await createNewChatAndReturnName();
+            if (!newName) {
+                alert("Could not create chat. Is the backend running?");
+                return;
+            }
+            currentChat = newName;
+            document.getElementById("chatTitle").innerText = currentChat;
+            var panel = document.getElementById("chatDocsPanel");
+            if (loginMode === "personal" && panel) {
+                panel.style.display = "block";
+                renderChatDocs();
+            }
+            renderChats();
         }
-        var newName = await createNewChatAndReturnName();
-        if (!newName) {
-            alert("Could not create chat. Is the backend running?");
-            return;
-        }
-        currentChat = newName;
-        document.getElementById("chatTitle").innerText = currentChat;
-        var panel = document.getElementById("chatDocsPanel");
-        if (loginMode === "personal" && panel) {
-            panel.style.display = "block";
-            renderChatDocs();
-        }
-        renderChats();
+    }
+
+    if (!userEmail && getGuestMessageCount() >= 2) {
+        openLoginPopup();
+        alert("Please Login to continue...");
+        return;
     }
 
     addMessage(message, "user");
@@ -971,8 +1073,8 @@ async function sendMessage() {
             "Content-Type": "application/json"
         },
         body: JSON.stringify({
-            mode: loginMode,
-            email: userEmail,
+            mode: userEmail ? loginMode : "personal",
+            email: userEmail || "",
             chat: currentChat,
             message: message
         })
@@ -1004,6 +1106,7 @@ async function sendMessage() {
         removeTypingIndicator();
         var reply = (data && data.reply != null) ? String(data.reply) : "No reply from server.";
         addMessage(reply, "bot");
+        if (!userEmail) setGuestMessageCount(getGuestMessageCount() + 1);
     })
     .catch(function (error) {
         console.error("Error:", error);
@@ -1390,7 +1493,9 @@ function googleLogin() {
     if (panel) panel.style.display = "block";
     renderChatDocs();
     loadSavedProfilePhoto();
-    loadUserData(email).catch(function (e) { console.error("Error loading user data after Google login", e); });
+    claimGuestChatIfAny(email).then(function (claimed) {
+        if (!claimed) loadUserData(email).catch(function (e) { console.error("Error loading user data after Google login", e); });
+    });
     history.replaceState({}, document.title, window.location.pathname || "/");
 })();
 
@@ -1410,18 +1515,21 @@ function googleLogin() {
     }
 })();
 
-/* Update Chat Documents toggle text on resize (short on mobile, full on desktop) */
+/* Update Chat Documents toggle text and mobile count on resize */
 (function setupChatDocsToggleResize() {
     function updateChatDocsToggleText() {
         var toggleBtn = document.getElementById("chatDocsToggle");
-        if (!toggleBtn) return;
-        var n = toggleBtn.getAttribute("data-count");
-        if (n === null) {
-            var m = toggleBtn.textContent.match(/Documents uploaded (\d+)/);
-            n = m ? m[1] : "0";
-            toggleBtn.setAttribute("data-count", n);
+        var mobileCount = document.getElementById("chatDocsMobileCount");
+        if (toggleBtn) {
+            var n = toggleBtn.getAttribute("data-count");
+            if (n === null) {
+                var m = toggleBtn.textContent.match(/Documents uploaded (\d+)/);
+                n = m ? m[1] : "0";
+                toggleBtn.setAttribute("data-count", n);
+            }
+            toggleBtn.textContent = (window.innerWidth <= 768) ? (n + " docs") : ("Documents uploaded " + n);
+            if (mobileCount) mobileCount.textContent = n + " docs";
         }
-        toggleBtn.textContent = (window.innerWidth <= 768) ? (n + " docs") : ("Documents uploaded " + n);
     }
     window.addEventListener("resize", updateChatDocsToggleText);
     if (document.readyState === "loading") {
